@@ -1,0 +1,10 @@
+# Ensure sensitive files are never committed, even if accidentally added
+.env export-ignore
+.env.* export-ignore
+data/** export-ignore
+*.log export-ignore
+
+# Protect against accidental commits
+*.key filter=git-crypt diff=git-crypt
+*.pem filter=git-crypt diff=git-crypt
+

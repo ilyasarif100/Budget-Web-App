@@ -372,6 +372,7 @@ async function handlePlaidSuccess(publicToken, metadata) {
                     initialBalance: plaidAccount.balances.current || 0,
                     plaidAccountId: plaidAccount.account_id,
                     plaidItemId: itemId,
+                    order: accounts.length, // Set order for new account
                     // NO plaidAccessToken - stored securely on backend only
                 };
 
@@ -440,100 +441,136 @@ function showPlaidError(message) {
     document.getElementById('plaid-error-message').textContent = message;
 }
 
-// Sync all transactions from Plaid
-async function syncAllTransactions() {
+// Sync transactions from Plaid for selected accounts
+async function syncAllTransactions(accountIdsToSync = null) {
     try {
         showToast('Syncing transactions...', 'info');
         
         let syncedCount = 0;
+        let modifiedCount = 0;
+        let removedCount = 0;
         
-        // Sync transactions for each account (using item_id, backend retrieves access token)
-        for (const [accountId, plaidData] of plaidItemIds.entries()) {
+        // If no account IDs specified, sync all Plaid accounts
+        const accountsToSync = accountIdsToSync || Array.from(plaidItemIds.keys());
+        
+        // Sync transactions for each selected account (using item_id, backend retrieves access token)
+        for (const accountId of accountsToSync) {
+            const plaidData = plaidItemIds.get(accountId);
+            if (!plaidData) continue;
             try {
                 const account = accounts.find(acc => acc.id === accountId);
                 if (!account || !account.plaidItemId) continue;
                 
-                // Get transactions from Plaid (backend handles access token)
-                const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        item_id: account.plaidItemId,
-                        cursor: plaidData.cursor || null,
-                    }),
-                });
-
-                if (!response.ok) {
-                    console.error(`Failed to sync transactions for account ${accountId}`);
-                    continue;
-                }
-
-                const syncData = await response.json();
+                let currentCursor = plaidData.cursor || null;
+                let hasMore = true;
+                let pageCount = 0;
+                const maxPages = 100; // Safety limit to prevent infinite loops
                 
-                // Process added transactions
-                for (const plaidTransaction of syncData.transactions) {
-                    // Check if transaction already exists
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === plaidTransaction.transaction_id
-                    );
+                // Loop to handle pagination - fetch ALL pages until has_more is false
+                while (hasMore && pageCount < maxPages) {
+                    pageCount++;
                     
-                    if (!existingTransaction && plaidTransaction.account_id === account.plaidAccountId) {
-                        // Map Plaid transaction to our transaction format
-                        const newTransaction = {
-                            id: transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1,
-                            date: plaidTransaction.date, // Plaid returns YYYY-MM-DD format - keep as string
-                            merchant: plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown',
-                            amount: plaidTransaction.amount, // Plaid convention: positive = expense, negative = income
-                            category: plaidTransaction.category ? plaidTransaction.category[0] : '',
-                            status: plaidTransaction.pending ? 'pending' : 'posted',
-                            accountId: accountId,
-                            accountType: (account.type === 'credit' || account.type === 'loan') ? 'credit' : 'debit',
-                            plaidTransactionId: plaidTransaction.transaction_id,
-                            plaidAccountId: plaidTransaction.account_id,
-                            updated: false,
-                        };
+                    // Get transactions from Plaid (backend handles access token)
+                    const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            item_id: account.plaidItemId,
+                            cursor: currentCursor,
+                        }),
+                    });
+
+                    if (!response.ok) {
+                        console.error(`Failed to sync transactions for account ${accountId}`);
+                        break;
+                    }
+
+                    const syncData = await response.json();
+                    
+                    // Process added transactions
+                    for (const plaidTransaction of syncData.transactions) {
+                        // Check if transaction already exists
+                        const existingTransaction = transactions.find(
+                            t => t.plaidTransactionId === plaidTransaction.transaction_id
+                        );
                         
-                        transactions.push(newTransaction);
-                        syncedCount++;
+                        // Match by account_id OR by our accountId if plaidAccountId matches
+                        const accountMatches = plaidTransaction.account_id === account.plaidAccountId;
+                        
+                        if (!existingTransaction && accountMatches) {
+                            // Map Plaid transaction to our transaction format
+                            const newTransaction = {
+                                id: transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1,
+                                date: plaidTransaction.date, // Plaid returns YYYY-MM-DD format - keep as string
+                                merchant: plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown',
+                                amount: plaidTransaction.amount, // Plaid convention: positive = expense, negative = income
+                                category: plaidTransaction.category ? plaidTransaction.category[0] : '',
+                                status: plaidTransaction.pending ? 'pending' : 'posted',
+                                accountId: accountId,
+                                accountType: (account.type === 'credit' || account.type === 'loan') ? 'credit' : 'debit',
+                                plaidTransactionId: plaidTransaction.transaction_id,
+                                plaidAccountId: plaidTransaction.account_id,
+                                updated: false,
+                                isNew: true, // Mark as new transaction for highlighting
+                            };
+                            
+                            transactions.push(newTransaction);
+                            syncedCount++;
+                        }
                     }
-                }
-                
-                // Process modified transactions
-                for (const plaidTransaction of syncData.modified) {
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === plaidTransaction.transaction_id
-                    );
                     
-                    if (existingTransaction) {
-                        existingTransaction.date = plaidTransaction.date;
-                        existingTransaction.merchant = plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown';
-                        existingTransaction.amount = plaidTransaction.amount;
-                        existingTransaction.category = plaidTransaction.category ? plaidTransaction.category[0] : '';
-                        existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
-                        existingTransaction.updated = true;
+                    // Process modified transactions
+                    for (const plaidTransaction of syncData.modified) {
+                        const existingTransaction = transactions.find(
+                            t => t.plaidTransactionId === plaidTransaction.transaction_id
+                        );
+                        
+                        if (existingTransaction) {
+                            existingTransaction.date = plaidTransaction.date;
+                            existingTransaction.merchant = plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown';
+                            existingTransaction.amount = plaidTransaction.amount;
+                            existingTransaction.category = plaidTransaction.category ? plaidTransaction.category[0] : '';
+                            existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
+                            existingTransaction.updated = true;
+                            modifiedCount++;
+                        }
                     }
-                }
-                
-                // Process removed transactions
-                for (const removedTransaction of syncData.removed) {
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === removedTransaction.transaction_id
-                    );
                     
-                    if (existingTransaction) {
-                        existingTransaction.status = 'removed';
+                    // Process removed transactions
+                    for (const removedTransaction of syncData.removed) {
+                        const existingTransaction = transactions.find(
+                            t => t.plaidTransactionId === removedTransaction.transaction_id
+                        );
+                        
+                        if (existingTransaction) {
+                            existingTransaction.status = 'removed';
+                            removedCount++;
+                        }
+                    }
+                    
+                    // Update cursor for next iteration
+                    currentCursor = syncData.next_cursor;
+                    hasMore = syncData.has_more || false;
+                    
+                    // If no more pages, break out of loop
+                    if (!hasMore) {
+                        break;
                     }
                 }
                 
-                // Update cursor in account data
-                account.plaidCursor = syncData.next_cursor;
+                // Update cursor in account data (always update, even if no new transactions)
+                account.plaidCursor = currentCursor;
                 
-                // Update cursor
+                // Update cursor in plaidItemIds map
                 plaidItemIds.set(accountId, {
                     ...plaidData,
-                    cursor: syncData.next_cursor,
+                    cursor: currentCursor,
                 });
                 
-                // Update account balance from Plaid (especially important for credit cards)
+                // CRITICAL: Immediately save cursor to ensure it's persisted
+                // This ensures cursor is saved even if sync fails later
+                await saveData();
+                
+                // Update account balance from Plaid (for ALL account types)
                 // Fetch latest account balances after syncing transactions
                 try {
                     const accountsResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
@@ -547,12 +584,10 @@ async function syncAllTransactions() {
                         const accountsData = await accountsResponse.json();
                         const plaidAccount = accountsData.accounts.find(a => a.account_id === account.plaidAccountId);
                         if (plaidAccount && plaidAccount.balances) {
-                            // Update balance from Plaid
+                            // Update balance from Plaid for ALL account types
                             account.balance = plaidAccount.balances.current || account.balance;
                             // Update initialBalance to track the latest balance from Plaid
-                            if (account.type === 'credit' || account.type === 'loan') {
-                                account.initialBalance = plaidAccount.balances.current || account.initialBalance;
-                            }
+                            account.initialBalance = plaidAccount.balances.current || account.initialBalance;
                         }
                     }
                 } catch (balanceError) {
@@ -564,15 +599,39 @@ async function syncAllTransactions() {
             }
         }
         
-        // Save transactions
-        if (syncedCount > 0) {
-            saveData();
+        // Always save data (even if no new transactions, cursor might have changed)
+        // CRITICAL: Ensure cursor is persisted for next sync
+        await saveData();
+        
+        if (syncedCount > 0 || modifiedCount > 0 || removedCount > 0) {
             invalidateCache();
             calculateAccountBalances();
             filterTransactions();
             initializeDashboard();
-            showToast(`Synced ${syncedCount} transaction(s)`, 'success');
+            
+            // Remove "new" highlight after 10 seconds
+            if (syncedCount > 0) {
+                setTimeout(() => {
+                    transactions.forEach(t => {
+                        if (t.isNew) {
+                            delete t.isNew;
+                        }
+                    });
+                    saveData();
+                    renderTransactions();
+                }, 10000); // 10 seconds
+            }
+            
+            let message = '';
+            if (syncedCount > 0) message += `Synced ${syncedCount} new transaction(s)`;
+            if (modifiedCount > 0) message += (message ? ', ' : '') + `Updated ${modifiedCount} transaction(s)`;
+            if (removedCount > 0) message += (message ? ', ' : '') + `Removed ${removedCount} transaction(s)`;
+            
+            showToast(message || 'Sync complete', 'success');
         } else {
+            // Still refresh UI even if no new transactions (cursor was updated)
+            filterTransactions();
+            initializeDashboard();
             showToast('No new transactions to sync', 'info');
         }
         
@@ -733,12 +792,12 @@ function getCategorySpending() {
         return categorySpendingCache;
     }
     
-    // Calculate category spending
+    // Calculate category spending - only count expenses (positive amounts), not income
     const spending = {};
     filteredTransactions
-        .filter(t => t.status !== 'removed' && t.category)
+        .filter(t => t.status !== 'removed' && t.category && t.amount > 0) // Only expenses
         .forEach(t => {
-            spending[t.category] = (spending[t.category] || 0) + Math.abs(t.amount);
+            spending[t.category] = (spending[t.category] || 0) + t.amount;
         });
     
     categorySpendingCache = spending;
@@ -1036,10 +1095,11 @@ async function deleteAccount(id) {
     if (!account) return;
     
     // Check if account has transactions
-    const hasTransactions = transactions.some(t => t.accountId === id && t.status !== 'removed');
+    const accountTransactions = transactions.filter(t => t.accountId === id && t.status !== 'removed');
+    const hasTransactions = accountTransactions.length > 0;
     
     if (hasTransactions) {
-        if (!confirm(`This account has transactions. Are you sure you want to delete "${account.name}"? This action cannot be undone.`)) {
+        if (!confirm(`This account has ${accountTransactions.length} transaction(s). Deleting this account will also delete all its transactions. Are you sure you want to delete "${account.name}"? This action cannot be undone.`)) {
             return;
         }
     } else {
@@ -1050,24 +1110,90 @@ async function deleteAccount(id) {
     
     const index = accounts.findIndex(a => a.id === id);
     if (index !== -1) {
+        // ============================================
+        // COMPLETE ACCOUNT DELETION - Remove ALL references
+        // ============================================
+        
+        // 1. Delete ALL transactions associated with this account (including removed ones)
+        const transactionsToDelete = transactions.filter(t => t.accountId === id);
+        const deletedTransactionCount = transactionsToDelete.length;
+        
+        // Remove transactions from memory arrays
+        transactions = transactions.filter(t => t.accountId !== id);
+        filteredTransactions = filteredTransactions.filter(t => t.accountId !== id);
+        
+        // Delete transactions from IndexedDB
+        if (deletedTransactionCount > 0) {
+            const deletePromises = transactionsToDelete.map(t => deleteFromStore(STORES.TRANSACTIONS, t.id));
+            await Promise.all(deletePromises);
+        }
+        
+        // 2. Remove account from accounts array
         accounts.splice(index, 1);
         
-        // Remove from included accounts if present
-        includedAccountIds.delete(id);
-        saveIncludedAccounts();
+        // 3. Remove from Plaid item IDs map
+        plaidItemIds.delete(id);
         
-        // Delete from IndexedDB
+        // 4. Remove from included accounts set
+        includedAccountIds.delete(id);
+        
+        // 5. Remove from accountsMap (will be rebuilt, but explicitly clear first)
+        accountsMap.delete(id);
+        
+        // 6. Clean up localStorage - remove account ID from includedAccountIds
+        saveIncludedAccounts(); // This will save the updated set without the deleted account
+        
+        // 7. Delete account from IndexedDB
         await deleteFromStore(STORES.ACCOUNTS, id);
         
-        saveData(); // Immediate save for deletion
-        buildAccountsMap(); // Rebuild map
+        // 8. Invalidate all caches (category spending, etc.)
+        invalidateCache();
+        
+        // 9. Save all data to ensure IndexedDB is fully updated
+        await saveData();
+        
+        // 10. Rebuild all data structures
+        buildAccountsMap(); // Rebuild accounts map
+        
+        // 11. Recalculate everything
+        calculateAccountBalances();
+        initializeDashboard();
+        
+        // 12. Update all UI components
         renderAccounts();
-        updateTotalBalance(); // Update total balance when account deleted
+        renderTransactions();
+        renderCategories();
+        updateTotalBalance();
         populateAccountFilters();
+        populateCategoryFilters();
+        
+        // 13. Update transaction account select dropdown
         if (window.populateTransactionAccountSelect) {
             window.populateTransactionAccountSelect();
         }
-        showToast('Account deleted successfully', 'success');
+        
+        // 14. Final verification - ensure no references remain
+        const remainingTransactions = transactions.filter(t => t.accountId === id);
+        const remainingInIncluded = includedAccountIds.has(id);
+        const remainingInPlaid = plaidItemIds.has(id);
+        const remainingInMap = accountsMap.has(id);
+        const remainingInAccounts = accounts.some(a => a.id === id);
+        
+        if (remainingTransactions.length > 0 || remainingInIncluded || remainingInPlaid || remainingInMap || remainingInAccounts) {
+            console.error('⚠️  WARNING: Account deletion incomplete! Some references remain:', {
+                transactions: remainingTransactions.length,
+                includedAccounts: remainingInIncluded,
+                plaidItemIds: remainingInPlaid,
+                accountsMap: remainingInMap,
+                accountsArray: remainingInAccounts
+            });
+            showToast('Warning: Some account data may remain. Please refresh the page.', 'error');
+        }
+        
+        const message = deletedTransactionCount > 0 
+            ? `Account and ${deletedTransactionCount} transaction(s) completely deleted`
+            : 'Account completely deleted';
+        showToast(message, 'success');
     }
 }
 
@@ -1159,6 +1285,12 @@ async function loadData() {
         const savedTransactions = await getAllFromStore(STORES.TRANSACTIONS);
         if (savedTransactions.length > 0) {
             transactions = savedTransactions;
+            // Remove isNew flags from loaded transactions (only show new for freshly synced ones)
+            transactions.forEach(t => {
+                if (t.isNew) {
+                    delete t.isNew;
+                }
+            });
             // Ensure accountId is set for all transactions
             transactions.forEach((t, index) => {
                 if (!t.accountId && t.accountType) {
@@ -1175,10 +1307,14 @@ async function loadData() {
         const savedAccounts = await getAllFromStore(STORES.ACCOUNTS);
         if (savedAccounts.length > 0) {
             accounts = savedAccounts;
-            // Ensure all accounts have initialBalance for backward compatibility
-            accounts.forEach(acc => {
+            // Ensure all accounts have initialBalance and order for backward compatibility
+            accounts.forEach((acc, index) => {
                 if (acc.initialBalance === undefined) {
                     acc.initialBalance = acc.balance || 0;
+                }
+                // Initialize order if missing
+                if (acc.order === undefined) {
+                    acc.order = index;
                 }
             });
             // Build accounts map after loading
@@ -1255,34 +1391,34 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
-// Calculate Account Balances from Transactions (Optimized - single pass)
-// Note: Credit cards and loans use balances directly from Plaid, not calculated from transactions
+// Calculate Account Balances from Transactions
+// Note: ALL Plaid-connected accounts use balances directly from Plaid, not calculated from transactions
+// Only manually created accounts calculate balances from transactions
 function calculateAccountBalances() {
     // Create account balance map for single-pass calculation
     const accountBalances = new Map();
     
     // Initialize balances with starting balances
     accounts.forEach(acc => {
-        // For credit cards and loans, use the balance directly from Plaid (don't recalculate)
-        // For other account types (depository, investment, etc.), recalculate from transactions
-        if (acc.type === 'credit' || acc.type === 'loan') {
-            // Use the balance that Plaid provides (stored in initialBalance or balance)
-            const startingBalance = acc.plaidAccountId ? (acc.initialBalance !== undefined ? acc.initialBalance : acc.balance) : acc.balance;
-            accountBalances.set(acc.id, startingBalance);
+        // For ALL Plaid-connected accounts, use the balance directly from Plaid (don't recalculate)
+        // For manually created accounts, calculate from initial balance + transactions
+        if (acc.plaidAccountId) {
+            // Use the balance that Plaid provides (stored in balance or initialBalance)
+            const plaidBalance = acc.balance !== undefined ? acc.balance : (acc.initialBalance !== undefined ? acc.initialBalance : 0);
+            accountBalances.set(acc.id, plaidBalance);
         } else {
-            // For depository and other accounts, calculate from initial balance + transactions
+            // For manually created accounts, calculate from initial balance + transactions
             const startingBalance = acc.initialBalance !== undefined ? acc.initialBalance : acc.balance;
             accountBalances.set(acc.id, startingBalance);
         }
     });
     
-    // Single pass through transactions (only for non-credit/non-loan accounts)
+    // Single pass through transactions (only for manually created accounts, NOT Plaid accounts)
     transactions.forEach(t => {
         if (t.status !== 'removed' && t.accountId && accountBalances.has(t.accountId)) {
             const account = accounts.find(a => a.id === t.accountId);
-            // Only recalculate balances for accounts that aren't credit cards or loans
-            // OR for credit cards/loans that are manually created (not from Plaid)
-            if (account && ((account.type !== 'credit' && account.type !== 'loan') || !account.plaidAccountId)) {
+            // Only recalculate balances for manually created accounts (not from Plaid)
+            if (account && !account.plaidAccountId) {
                 accountBalances.set(t.accountId, accountBalances.get(t.accountId) + t.amount);
             }
         }
@@ -1290,12 +1426,13 @@ function calculateAccountBalances() {
     
     // Update account balances
     accounts.forEach(acc => {
-        // For credit cards and loans from Plaid, keep the balance from Plaid
-        // For other accounts, use calculated balance
-        if ((acc.type === 'credit' || acc.type === 'loan') && acc.plaidAccountId) {
+        // For ALL Plaid-connected accounts, keep the balance from Plaid (don't overwrite it)
+        // The balance will be updated when syncing transactions from Plaid
+        if (acc.plaidAccountId) {
             // Keep the balance from Plaid (don't overwrite it)
-            // The balance will be updated when syncing transactions from Plaid
+            // Balance is updated from Plaid during sync
         } else {
+            // For manually created accounts, use calculated balance
             acc.balance = accountBalances.get(acc.id) || 0;
         }
     });
@@ -1448,6 +1585,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize included accounts (all accounts by default)
     initializeIncludedAccounts();
     
+    // Initialize Total Spent preferences
+    initializeIncludedSpent();
+    
     // Set default date filter to current month
     document.getElementById('filter-date-range').value = 'current-month';
     
@@ -1474,6 +1614,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Calculate account balances from transactions (this will update balances based on initialBalance + transactions)
     calculateAccountBalances();
+    
+    // Auto-sync transactions on load if Plaid accounts exist
+    // This ensures users always have the latest transactions when they open the app
+    if (plaidItemIds.size > 0) {
+        // Small delay to let UI render first
+        setTimeout(async () => {
+            await syncAllTransactions();
+        }, 1000);
+    }
 });
 
 // Theme Management
@@ -1539,8 +1688,16 @@ function renderAccountsSummary() {
         return;
     }
 
-    // Show compact chips for all accounts
-    accounts.forEach(acc => {
+    // Sort accounts by order (if exists), then by name - same as expanded view
+    const sortedAccounts = [...accounts].sort((a, b) => {
+        const orderA = a.order !== undefined ? a.order : 999;
+        const orderB = b.order !== undefined ? b.order : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+    });
+
+    // Show compact chips for all accounts in order
+    sortedAccounts.forEach(acc => {
         const chip = document.createElement('div');
         chip.className = 'account-chip';
         const balanceClass = acc.balance < 0 ? 'negative' : 'positive';
@@ -1559,24 +1716,32 @@ function renderAccountsExpanded() {
     
     container.innerHTML = '';
 
-    accounts.forEach(acc => {
+    // Sort accounts by order (if exists), then by name
+    const sortedAccounts = [...accounts].sort((a, b) => {
+        const orderA = a.order !== undefined ? a.order : 999;
+        const orderB = b.order !== undefined ? b.order : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+    });
+
+    sortedAccounts.forEach((acc, index) => {
         const accountEl = document.createElement('div');
         accountEl.className = 'account-item';
+        accountEl.draggable = true;
+        accountEl.dataset.accountId = acc.id;
+        accountEl.dataset.order = acc.order !== undefined ? acc.order : index;
         
         // Format account type label based on type and subtype
         let accountTypeLabel = '';
         if (acc.type === 'credit') {
             accountTypeLabel = acc.subtype === 'credit card' ? 'Credit Card' : 'Credit';
         } else if (acc.type === 'loan') {
-            // Capitalize loan subtypes properly
             accountTypeLabel = acc.subtype.split(' ').map(word => 
                 word.charAt(0).toUpperCase() + word.slice(1)
             ).join(' ');
         } else if (acc.type === 'investment') {
-            // Keep investment subtypes as-is (they're already formatted)
             accountTypeLabel = acc.subtype;
         } else {
-            // Depository and other types
             accountTypeLabel = acc.subtype.split(' ').map(word => 
                 word.charAt(0).toUpperCase() + word.slice(1)
             ).join(' ');
@@ -1587,24 +1752,53 @@ function renderAccountsExpanded() {
             ? (acc.balance <= 0 ? 'negative' : 'positive')
             : (acc.balance < 0 ? 'negative' : 'positive');
         
+        // Get account icon based on type
+        const accountIcon = getAccountIcon(acc.type, acc.subtype);
+        
         accountEl.innerHTML = `
-            <div class="account-item-header">
-                <div>
-                    <span class="account-item-name">${acc.name}</span>
-                    <span class="account-item-mask">••••${acc.mask}</span>
+            <div class="account-item-drag-handle" title="Drag to reorder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="9" cy="12" r="1"></circle>
+                    <circle cx="9" cy="5" r="1"></circle>
+                    <circle cx="9" cy="19" r="1"></circle>
+                    <circle cx="15" cy="12" r="1"></circle>
+                    <circle cx="15" cy="5" r="1"></circle>
+                    <circle cx="15" cy="19" r="1"></circle>
+                </svg>
+            </div>
+            <div class="account-item-content">
+                <div class="account-item-header">
+                    <div class="account-item-icon">${accountIcon}</div>
+                    <div class="account-item-info">
+                        <div class="account-item-name-row">
+                            <span class="account-item-name">${acc.name}</span>
+                            <span class="account-item-type">${accountTypeLabel}</span>
+                        </div>
+                        <span class="account-item-mask">••••${acc.mask}</span>
+                    </div>
+                    <div class="account-item-balance ${balanceClass}">${formatCurrency(acc.balance)}</div>
                 </div>
-                <span class="account-item-type">${accountTypeLabel}</span>
-            </div>
-            <div class="account-item-balance ${balanceClass}">
-                ${formatCurrency(acc.balance)}
-            </div>
-            <div class="account-item-actions" style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
-                <button class="btn-small edit-account" data-id="${acc.id}">Edit</button>
-                <button class="btn-small delete-account" data-id="${acc.id}" style="color: var(--danger-color);">Delete</button>
+                <div class="account-item-actions">
+                    <button class="btn-icon-small edit-account" data-id="${acc.id}" title="Edit account">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon-small delete-account" data-id="${acc.id}" title="Delete account">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
         `;
         container.appendChild(accountEl);
     });
+    
+    // Setup drag and drop
+    setupAccountDragAndDrop(container);
     
     // Add edit/delete event listeners
     container.querySelectorAll('.edit-account').forEach(btn => {
@@ -1620,6 +1814,145 @@ function renderAccountsExpanded() {
             deleteAccount(id);
         });
     });
+}
+
+// Get account icon based on type
+function getAccountIcon(type, subtype) {
+    if (type === 'credit' || subtype === 'credit card') {
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+            <line x1="1" y1="10" x2="23" y2="10"></line>
+        </svg>`;
+    } else if (type === 'depository') {
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+        </svg>`;
+    } else if (type === 'loan') {
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+        </svg>`;
+    } else if (type === 'investment') {
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polyline>
+        </svg>`;
+    } else {
+        return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>`;
+    }
+}
+
+// Setup drag and drop for account reordering
+function setupAccountDragAndDrop(container) {
+    let draggedElement = null;
+    let draggedAccountId = null;
+
+    container.querySelectorAll('.account-item').forEach((item) => {
+        item.addEventListener('dragstart', (e) => {
+            draggedElement = item;
+            draggedAccountId = item.dataset.accountId;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', item.innerHTML);
+        });
+
+        item.addEventListener('dragend', (e) => {
+            item.classList.remove('dragging');
+            container.querySelectorAll('.account-item').forEach(el => {
+                el.classList.remove('drag-over');
+            });
+        });
+
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            
+            const afterElement = getDragAfterElement(container, e.clientY);
+            const dragging = container.querySelector('.dragging');
+            
+            if (afterElement == null) {
+                container.appendChild(dragging);
+            } else {
+                container.insertBefore(dragging, afterElement);
+            }
+        });
+
+        item.addEventListener('dragenter', (e) => {
+            if (item !== draggedElement) {
+                item.classList.add('drag-over');
+            }
+        });
+
+        item.addEventListener('dragleave', (e) => {
+            item.classList.remove('drag-over');
+        });
+
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (draggedElement && draggedElement !== item && draggedAccountId) {
+                const targetAccountId = item.dataset.accountId;
+                reorderAccountsById(draggedAccountId, targetAccountId);
+            }
+        });
+    });
+}
+
+// Reorder accounts by ID (more reliable than index)
+function reorderAccountsById(draggedAccountId, targetAccountId) {
+    // Get current sorted order
+    const sortedAccounts = [...accounts].sort((a, b) => {
+        const orderA = a.order !== undefined ? a.order : 999;
+        const orderB = b.order !== undefined ? b.order : 999;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name);
+    });
+
+    // Find indices
+    const draggedIndex = sortedAccounts.findIndex(acc => acc.id === draggedAccountId);
+    const targetIndex = sortedAccounts.findIndex(acc => acc.id === targetAccountId);
+
+    if (draggedIndex === -1 || targetIndex === -1) return;
+
+    // Reorder
+    const [movedAccount] = sortedAccounts.splice(draggedIndex, 1);
+    sortedAccounts.splice(targetIndex, 0, movedAccount);
+
+    // Update order property for all accounts
+    sortedAccounts.forEach((acc, index) => {
+        acc.order = index;
+    });
+
+    // Update accounts array with new orders
+    accounts.forEach(acc => {
+        const sortedAcc = sortedAccounts.find(sa => sa.id === acc.id);
+        if (sortedAcc) {
+            acc.order = sortedAcc.order;
+        }
+    });
+
+    // Save and re-render
+    saveData();
+    renderAccounts();
+}
+
+// Get element after which to insert dragged element
+function getDragAfterElement(container, y) {
+    const draggableElements = [...container.querySelectorAll('.account-item:not(.dragging)')];
+    
+    return draggableElements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        
+        if (offset < 0 && offset > closest.offset) {
+            return { offset: offset, element: child };
+        } else {
+            return closest;
+        }
+    }, { offset: Number.NEGATIVE_INFINITY }).element;
 }
 
 // Check if current filter is a monthly view
@@ -1651,6 +1984,11 @@ function recalculateCategorySpent() {
 // Total Balance Configuration
 let includedAccountIds = new Set(); // Set of account IDs to include in total balance
 
+// Total Spent Configuration
+let includedSpentCategoryIds = new Set(); // Set of category IDs to include in total spent
+let includedSpentAccountIds = new Set(); // Set of account IDs to include in total spent
+let includeExemptInSpent = true; // Whether to include exempt transactions (no category)
+
 // Initialize included accounts (all accounts by default)
 function initializeIncludedAccounts() {
     if (accounts.length === 0) {
@@ -1679,9 +2017,216 @@ function initializeIncludedAccounts() {
     saveIncludedAccounts();
 }
 
+// Initialize Total Spent preferences (all categories and accounts by default)
+function initializeIncludedSpent() {
+    // Load category preferences
+    const savedCategories = localStorage.getItem('includedSpentCategoryIds');
+    if (savedCategories) {
+        try {
+            const savedIds = JSON.parse(savedCategories);
+            includedSpentCategoryIds = new Set(savedIds);
+            // Only include categories that still exist
+            includedSpentCategoryIds = new Set([...includedSpentCategoryIds].filter(id => categories.some(cat => cat.id === id)));
+        } catch (e) {
+            console.error('Error loading included spent categories:', e);
+            includedSpentCategoryIds = new Set(categories.map(cat => cat.id));
+        }
+    } else {
+        // Default: all categories included
+        includedSpentCategoryIds = new Set(categories.map(cat => cat.id));
+    }
+    
+    // Load account preferences
+    const savedAccounts = localStorage.getItem('includedSpentAccountIds');
+    if (savedAccounts) {
+        try {
+            const savedIds = JSON.parse(savedAccounts);
+            includedSpentAccountIds = new Set(savedIds);
+            // Only include accounts that still exist
+            includedSpentAccountIds = new Set([...includedSpentAccountIds].filter(id => accounts.some(acc => acc.id === id)));
+        } catch (e) {
+            console.error('Error loading included spent accounts:', e);
+            includedSpentAccountIds = new Set(accounts.map(acc => acc.id));
+        }
+    } else {
+        // Default: all accounts included
+        includedSpentAccountIds = new Set(accounts.map(acc => acc.id));
+    }
+    
+    // Load exempt preference
+    const savedExempt = localStorage.getItem('includeExemptInSpent');
+    if (savedExempt !== null) {
+        includeExemptInSpent = savedExempt === 'true';
+    } else {
+        includeExemptInSpent = true; // Default: include exempt
+    }
+    
+    // Save defaults if needed
+    saveIncludedSpent();
+}
+
+// Save Total Spent preferences
+function saveIncludedSpent() {
+    localStorage.setItem('includedSpentCategoryIds', JSON.stringify([...includedSpentCategoryIds]));
+    localStorage.setItem('includedSpentAccountIds', JSON.stringify([...includedSpentAccountIds]));
+    localStorage.setItem('includeExemptInSpent', includeExemptInSpent.toString());
+}
+
 // Save included accounts preference
 function saveIncludedAccounts() {
     localStorage.setItem('includedAccountIds', JSON.stringify([...includedAccountIds]));
+}
+
+// Edit Total Spent
+function editTotalSpent() {
+    const spentModal = document.getElementById('edit-spent-modal');
+    const categoriesList = document.getElementById('spent-categories-list');
+    const accountsList = document.getElementById('spent-accounts-list');
+    
+    if (!categoriesList || !accountsList) return;
+    
+    // Populate categories
+    categoriesList.innerHTML = '';
+    if (categories.length === 0) {
+        categoriesList.innerHTML = '<p style="color: var(--text-secondary); padding: 1rem; text-align: center;">No categories available</p>';
+    } else {
+        categories.forEach(cat => {
+            const categoryItem = document.createElement('div');
+            categoryItem.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; background: var(--bg-secondary); transition: background 0.2s ease;';
+            categoryItem.style.border = '1px solid var(--border-color)';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `spent-category-${cat.id}`;
+            checkbox.checked = includedSpentCategoryIds.size === 0 || includedSpentCategoryIds.has(cat.id);
+            checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);';
+            checkbox.addEventListener('change', updateSpentDisplay);
+            
+            const label = document.createElement('label');
+            label.htmlFor = `spent-category-${cat.id}`;
+            label.style.cssText = 'flex: 1; cursor: pointer; font-weight: 500; color: var(--text-primary);';
+            label.textContent = cat.name;
+            
+            categoryItem.appendChild(checkbox);
+            categoryItem.appendChild(label);
+            categoriesList.appendChild(categoryItem);
+        });
+    }
+    
+    // Populate accounts
+    accountsList.innerHTML = '';
+    if (accounts.length === 0) {
+        accountsList.innerHTML = '<p style="color: var(--text-secondary); padding: 1rem; text-align: center;">No accounts available</p>';
+    } else {
+        accounts.forEach(acc => {
+            const accountItem = document.createElement('div');
+            accountItem.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; background: var(--bg-secondary); transition: background 0.2s ease;';
+            accountItem.style.border = '1px solid var(--border-color)';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `spent-account-${acc.id}`;
+            checkbox.checked = includedSpentAccountIds.size === 0 || includedSpentAccountIds.has(acc.id);
+            checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);';
+            checkbox.addEventListener('change', updateSpentDisplay);
+            
+            const label = document.createElement('label');
+            label.htmlFor = `spent-account-${acc.id}`;
+            label.style.cssText = 'flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
+            label.innerHTML = `
+                <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
+            `;
+            
+            accountItem.appendChild(checkbox);
+            accountItem.appendChild(label);
+            accountsList.appendChild(accountItem);
+        });
+    }
+    
+    // Set exempt checkbox
+    document.getElementById('include-exempt-spent').checked = includeExemptInSpent;
+    document.getElementById('include-exempt-spent').addEventListener('change', updateSpentDisplay);
+    
+    // Update display
+    updateSpentDisplay();
+    
+    // Show modal
+    spentModal.classList.add('active');
+}
+
+// Update Total Spent display in modal
+function updateSpentDisplay() {
+    // Get selected categories
+    const selectedCategories = new Set();
+    categories.forEach(cat => {
+        const checkbox = document.getElementById(`spent-category-${cat.id}`);
+        if (checkbox && checkbox.checked) {
+            selectedCategories.add(cat.id);
+        }
+    });
+    
+    // Get selected accounts
+    const selectedAccounts = new Set();
+    accounts.forEach(acc => {
+        const checkbox = document.getElementById(`spent-account-${acc.id}`);
+        if (checkbox && checkbox.checked) {
+            selectedAccounts.add(acc.id);
+        }
+    });
+    
+    // Get exempt preference
+    const includeExempt = document.getElementById('include-exempt-spent').checked;
+    
+    // Calculate total with current selections
+    const total = filteredTransactions
+        .filter(t => {
+            if (t.status === 'removed' || t.amount <= 0) return false;
+            if (selectedAccounts.size > 0 && !selectedAccounts.has(t.accountId)) return false;
+            if (t.category) {
+                const category = categories.find(c => c.name === t.category);
+                if (category && selectedCategories.size > 0 && !selectedCategories.has(category.id)) return false;
+            } else {
+                if (!includeExempt) return false;
+            }
+            return true;
+        })
+        .reduce((sum, t) => sum + t.amount, 0);
+    
+    document.getElementById('spent-sum-display').textContent = formatCurrency(total);
+}
+
+// Save Total Spent preferences
+function saveTotalSpent() {
+    // Get selected categories
+    includedSpentCategoryIds.clear();
+    categories.forEach(cat => {
+        const checkbox = document.getElementById(`spent-category-${cat.id}`);
+        if (checkbox && checkbox.checked) {
+            includedSpentCategoryIds.add(cat.id);
+        }
+    });
+    
+    // Get selected accounts
+    includedSpentAccountIds.clear();
+    accounts.forEach(acc => {
+        const checkbox = document.getElementById(`spent-account-${acc.id}`);
+        if (checkbox && checkbox.checked) {
+            includedSpentAccountIds.add(acc.id);
+        }
+    });
+    
+    // Get exempt preference
+    includeExemptInSpent = document.getElementById('include-exempt-spent').checked;
+    
+    // Save preferences
+    saveIncludedSpent();
+    
+    // Update total spent display
+    updateTotalSpent();
+    
+    // Close modal
+    document.getElementById('edit-spent-modal').classList.remove('active');
+    showToast('Total spent preferences updated', 'success');
 }
 
 // Calculate Total Balance (sum of selected accounts)
@@ -1711,6 +2256,73 @@ function updateBalanceDisplay() {
     });
     
     accountsSumDisplay.textContent = formatCurrency(total);
+}
+
+// Populate Sync Accounts Modal
+function populateSyncAccountsModal() {
+    const accountsList = document.getElementById('sync-accounts-list');
+    
+    if (!accountsList) return;
+    
+    accountsList.innerHTML = '';
+    
+    // Get only Plaid-connected accounts
+    const plaidAccounts = accounts.filter(acc => acc.plaidItemId && plaidItemIds.has(acc.id));
+    
+    if (plaidAccounts.length === 0) {
+        accountsList.innerHTML = '<p style="color: var(--text-secondary); padding: 1rem; text-align: center;">No Plaid accounts connected</p>';
+        return;
+    }
+    
+    // Create checkboxes for each Plaid account
+    plaidAccounts.forEach(acc => {
+        const accountItem = document.createElement('div');
+        accountItem.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; background: var(--bg-secondary); transition: background 0.2s ease;';
+        accountItem.style.border = '1px solid var(--border-color)';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `sync-account-${acc.id}`;
+        checkbox.checked = true; // All selected by default
+        checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);';
+        
+        const label = document.createElement('label');
+        label.htmlFor = `sync-account-${acc.id}`;
+        label.style.cssText = 'flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
+        label.innerHTML = `
+            <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
+            <span style="font-size: 0.875rem; color: var(--text-secondary);">${acc.type}</span>
+        `;
+        
+        accountItem.appendChild(checkbox);
+        accountItem.appendChild(label);
+        accountsList.appendChild(accountItem);
+    });
+}
+
+// Confirm Sync Selected Accounts
+async function confirmSyncSelectedAccounts() {
+    const selectedIds = [];
+    
+    accounts.forEach(acc => {
+        if (acc.plaidItemId && plaidItemIds.has(acc.id)) {
+            const checkbox = document.getElementById(`sync-account-${acc.id}`);
+            if (checkbox && checkbox.checked) {
+                selectedIds.push(acc.id);
+            }
+        }
+    });
+    
+    if (selectedIds.length === 0) {
+        showToast('Please select at least one account to sync', 'error');
+        return;
+    }
+    
+    // Close modal
+    document.getElementById('sync-accounts-modal').classList.remove('active');
+    
+    // Sync selected accounts
+    await syncAllTransactions(selectedIds);
 }
 
 // Edit Total Balance
@@ -1785,21 +2397,43 @@ function saveTotalBalance() {
 }
 
 // Calculate Total Spent (for filtered transactions)
+// Only count expenses (positive amounts), not income (negative amounts)
+// Respects user preferences for categories, accounts, and exempt transactions
 function updateTotalSpent() {
     const total = filteredTransactions
-        .filter(t => t.status !== 'removed')
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        .filter(t => {
+            // Only expenses
+            if (t.status === 'removed' || t.amount <= 0) return false;
+            
+            // Check account filter
+            if (includedSpentAccountIds.size > 0 && !includedSpentAccountIds.has(t.accountId)) return false;
+            
+            // Check category filter
+            if (t.category) {
+                // Has category - check if category is included
+                const category = categories.find(c => c.name === t.category);
+                if (category && includedSpentCategoryIds.size > 0 && !includedSpentCategoryIds.has(category.id)) {
+                    return false;
+                }
+            } else {
+                // No category (exempt) - check if exempt is included
+                if (!includeExemptInSpent) return false;
+            }
+            
+            return true;
+        })
+        .reduce((sum, t) => sum + t.amount, 0);
     document.getElementById('total-spent').textContent = formatCurrency(total);
 }
 
 // Update Category Summary (shows all budget categories with their spent amounts)
 function updateCategorySummary() {
-    // Calculate spent amounts from filtered transactions
+    // Calculate spent amounts from filtered transactions - only expenses, not income
     const categorySpending = {};
     filteredTransactions
-        .filter(t => t.status !== 'removed' && t.category)
+        .filter(t => t.status !== 'removed' && t.category && t.amount > 0) // Only expenses
         .forEach(t => {
-            categorySpending[t.category] = (categorySpending[t.category] || 0) + Math.abs(t.amount);
+            categorySpending[t.category] = (categorySpending[t.category] || 0) + t.amount;
         });
 
     const summaryEl = document.getElementById('category-summary');
@@ -2098,6 +2732,7 @@ function renderTransactionRow(transaction) {
     if (transaction.status === 'pending') row.classList.add('pending');
     if (transaction.status === 'removed') row.classList.add('removed');
     if (transaction.updated) row.classList.add('updated');
+    if (transaction.isNew) row.classList.add('new-transaction');
 
     // Build category select HTML
     const selectedCategory = transaction.category || '';
@@ -2259,12 +2894,27 @@ function updateTransactionCategory(transactionId, newCategory) {
         transaction.category = newCategory || '';
         transaction.updated = true;
 
+        // Save scroll position before re-rendering - find the scrollable container
+        const tbody = document.getElementById('transactions-body');
+        const scrollContainer = tbody?.closest('.table-container');
+        const scrollPosition = scrollContainer ? scrollContainer.scrollTop : window.pageYOffset || document.documentElement.scrollTop;
+
         saveData(); // Immediate save for category change
         invalidateCache(); // Invalidate spending cache
         initializeDashboard(); // This will recalculate everything from transactions
         renderCategoriesSummary(); // Update both views
         renderCategoriesExpanded();
         renderTransactions();
+        
+        // Restore scroll position after rendering (use requestAnimationFrame to ensure DOM is updated)
+        requestAnimationFrame(() => {
+            if (scrollContainer) {
+                scrollContainer.scrollTop = scrollPosition;
+            } else {
+                // Fallback to window scroll if container not found
+                window.scrollTo(0, scrollPosition);
+            }
+        });
     }
 }
 
@@ -2614,6 +3264,9 @@ function setupEventListeners() {
     // Edit Total Balance
     document.getElementById('edit-total-balance').addEventListener('click', editTotalBalance);
     
+    // Edit Total Spent
+    document.getElementById('edit-total-spent').addEventListener('click', editTotalSpent);
+    
     // Expand/Collapse Accounts
     const toggleAccountsBtn = document.getElementById('toggle-accounts');
     toggleAccountsBtn.addEventListener('click', () => {
@@ -2931,7 +3584,8 @@ function setupEventListeners() {
                 subtype,
                 initialBalance: balance,
                 balance: balance,
-                mask
+                mask,
+                order: accounts.length // Set order for new account
             };
             accounts.push(newAccount);
             // Automatically include new account in total balance
@@ -2955,12 +3609,13 @@ function setupEventListeners() {
     });
 
     // Footer buttons
-    document.getElementById('sync-btn').addEventListener('click', async () => {
+    document.getElementById('sync-btn').addEventListener('click', () => {
         if (plaidItemIds.size === 0) {
             showToast('No Plaid accounts connected. Please connect an account first.', 'error');
             return;
         }
-        await syncAllTransactions();
+        populateSyncAccountsModal();
+        document.getElementById('sync-accounts-modal').classList.add('active');
     });
 
     document.getElementById('export-btn').addEventListener('click', () => {
@@ -3047,6 +3702,66 @@ function setupEventListeners() {
         }
     });
 
+    // Sync Accounts Modal
+    const syncAccountsModal = document.getElementById('sync-accounts-modal');
+    const closeSyncModal = document.getElementById('close-sync-modal');
+    const cancelSync = document.getElementById('cancel-sync');
+    const confirmSync = document.getElementById('confirm-sync');
+    const selectAllSync = document.getElementById('select-all-sync');
+    const deselectAllSync = document.getElementById('deselect-all-sync');
+
+    if (closeSyncModal) {
+        closeSyncModal.addEventListener('click', () => {
+            syncAccountsModal.classList.remove('active');
+        });
+    }
+
+    if (cancelSync) {
+        cancelSync.addEventListener('click', () => {
+            syncAccountsModal.classList.remove('active');
+        });
+    }
+
+    if (confirmSync) {
+        confirmSync.addEventListener('click', async () => {
+            await confirmSyncSelectedAccounts();
+        });
+    }
+
+    if (selectAllSync) {
+        selectAllSync.addEventListener('click', () => {
+            accounts.forEach(acc => {
+                if (acc.plaidItemId && plaidItemIds.has(acc.id)) {
+                    const checkbox = document.getElementById(`sync-account-${acc.id}`);
+                    if (checkbox) {
+                        checkbox.checked = true;
+                    }
+                }
+            });
+        });
+    }
+
+    if (deselectAllSync) {
+        deselectAllSync.addEventListener('click', () => {
+            accounts.forEach(acc => {
+                if (acc.plaidItemId && plaidItemIds.has(acc.id)) {
+                    const checkbox = document.getElementById(`sync-account-${acc.id}`);
+                    if (checkbox) {
+                        checkbox.checked = false;
+                    }
+                }
+            });
+        });
+    }
+
+    if (syncAccountsModal) {
+        syncAccountsModal.addEventListener('click', (e) => {
+            if (e.target === syncAccountsModal) {
+                syncAccountsModal.classList.remove('active');
+            }
+        });
+    }
+
     // Select All / Deselect All for balance accounts
     const selectAllAccounts = document.getElementById('select-all-accounts');
     const deselectAllAccounts = document.getElementById('deselect-all-accounts');
@@ -3072,6 +3787,94 @@ function setupEventListeners() {
                 }
             });
             updateBalanceDisplay();
+        });
+    }
+
+    // Edit Total Spent Modal
+    const spentModal = document.getElementById('edit-spent-modal');
+    const closeSpentModal = document.getElementById('close-spent-modal');
+    const cancelSpentEdit = document.getElementById('cancel-spent-edit');
+    const saveSpent = document.getElementById('save-spent');
+
+    if (closeSpentModal) {
+        closeSpentModal.addEventListener('click', () => {
+            spentModal.classList.remove('active');
+        });
+    }
+
+    if (cancelSpentEdit) {
+        cancelSpentEdit.addEventListener('click', () => {
+            spentModal.classList.remove('active');
+        });
+    }
+
+    if (saveSpent) {
+        saveSpent.addEventListener('click', () => {
+            saveTotalSpent();
+        });
+    }
+
+    if (spentModal) {
+        spentModal.addEventListener('click', (e) => {
+            if (e.target === spentModal) {
+                spentModal.classList.remove('active');
+            }
+        });
+    }
+
+    // Select All / Deselect All for Categories (Spent Modal)
+    const selectAllCategoriesSpent = document.getElementById('select-all-categories-spent');
+    const deselectAllCategoriesSpent = document.getElementById('deselect-all-categories-spent');
+    
+    if (selectAllCategoriesSpent) {
+        selectAllCategoriesSpent.addEventListener('click', () => {
+            categories.forEach(cat => {
+                const checkbox = document.getElementById(`spent-category-${cat.id}`);
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+            });
+            updateSpentDisplay();
+        });
+    }
+    
+    if (deselectAllCategoriesSpent) {
+        deselectAllCategoriesSpent.addEventListener('click', () => {
+            categories.forEach(cat => {
+                const checkbox = document.getElementById(`spent-category-${cat.id}`);
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSpentDisplay();
+        });
+    }
+
+    // Select All / Deselect All for Accounts (Spent Modal)
+    const selectAllAccountsSpent = document.getElementById('select-all-accounts-spent');
+    const deselectAllAccountsSpent = document.getElementById('deselect-all-accounts-spent');
+    
+    if (selectAllAccountsSpent) {
+        selectAllAccountsSpent.addEventListener('click', () => {
+            accounts.forEach(acc => {
+                const checkbox = document.getElementById(`spent-account-${acc.id}`);
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+            });
+            updateSpentDisplay();
+        });
+    }
+    
+    if (deselectAllAccountsSpent) {
+        deselectAllAccountsSpent.addEventListener('click', () => {
+            accounts.forEach(acc => {
+                const checkbox = document.getElementById(`spent-account-${acc.id}`);
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            updateSpentDisplay();
         });
     }
 

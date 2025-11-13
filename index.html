@@ -589,8 +589,38 @@
         </div>
     </div>
 
+    <!-- Authentication Modal -->
+    <div class="modal" id="auth-modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2 id="auth-modal-title">Login</h2>
+                <button class="modal-close" id="close-auth-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="auth-form">
+                    <div class="form-group">
+                        <label for="auth-email">Email</label>
+                        <input type="email" id="auth-email" required autocomplete="email" placeholder="your@email.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="auth-password">Password</label>
+                        <input type="password" id="auth-password" required autocomplete="current-password" placeholder="Enter your password">
+                    </div>
+                    <div id="auth-error" style="display: none; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--danger-color); border-radius: var(--radius-md); margin-bottom: 1rem; color: var(--danger-color); font-size: 0.875rem;"></div>
+                    <div class="form-actions">
+                        <button type="button" class="btn-secondary" id="auth-switch-mode">Need to register?</button>
+                        <button type="submit" class="btn-primary" id="auth-submit">Login</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
     <script src="config.js"></script>
+    <!-- Error handling and validation modules -->
+    <script src="js/error-handler.js"></script>
+    <script src="js/validation.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

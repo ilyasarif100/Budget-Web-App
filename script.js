@@ -230,19 +230,95 @@ async function verifyToken() {
 }
 
 // Show auth modal
-function showAuthModal() {
-    // For now, just show alert - can be enhanced with proper modal
-    const email = prompt('Please log in with your email:');
-    if (!email) return;
-    
-    const password = prompt('Enter your password:');
-    if (!password) return;
+let isRegisterMode = false;
 
-    login(email, password).then(() => {
-        showToast('Logged in successfully!', 'success');
+function showAuthModal() {
+    const authModal = document.getElementById('auth-modal');
+    const authForm = document.getElementById('auth-form');
+    const authEmail = document.getElementById('auth-email');
+    const authPassword = document.getElementById('auth-password');
+    const authError = document.getElementById('auth-error');
+    const authTitle = document.getElementById('auth-modal-title');
+    const authSubmit = document.getElementById('auth-submit');
+    const authSwitchMode = document.getElementById('auth-switch-mode');
+    
+    if (!authModal) return;
+    
+    // Reset form
+    isRegisterMode = false;
+    authForm.reset();
+    authError.style.display = 'none';
+    authTitle.textContent = 'Login';
+    authSubmit.textContent = 'Login';
+    authSwitchMode.textContent = 'Need to register?';
+    
+    // Show modal
+    authModal.classList.add('active');
+    authEmail.focus();
+}
+
+function hideAuthModal() {
+    const authModal = document.getElementById('auth-modal');
+    if (authModal) {
+        authModal.classList.remove('active');
+    }
+}
+
+function toggleAuthMode() {
+    isRegisterMode = !isRegisterMode;
+    const authTitle = document.getElementById('auth-modal-title');
+    const authSubmit = document.getElementById('auth-submit');
+    const authSwitchMode = document.getElementById('auth-switch-mode');
+    const authError = document.getElementById('auth-error');
+    
+    authError.style.display = 'none';
+    
+    if (isRegisterMode) {
+        authTitle.textContent = 'Register';
+        authSubmit.textContent = 'Register';
+        authSwitchMode.textContent = 'Already have an account?';
+    } else {
+        authTitle.textContent = 'Login';
+        authSubmit.textContent = 'Login';
+        authSwitchMode.textContent = 'Need to register?';
+    }
+}
+
+function handleAuthSubmit(e) {
+    e.preventDefault();
+    
+    const authEmail = document.getElementById('auth-email');
+    const authPassword = document.getElementById('auth-password');
+    const authError = document.getElementById('auth-error');
+    const authSubmit = document.getElementById('auth-submit');
+    
+    const email = authEmail.value.trim();
+    const password = authPassword.value;
+    
+    if (!email || !password) {
+        authError.textContent = 'Please enter both email and password';
+        authError.style.display = 'block';
+        return;
+    }
+    
+    // Disable submit button and show loading
+    authSubmit.disabled = true;
+    authSubmit.textContent = isRegisterMode ? 'Registering...' : 'Logging in...';
+    authError.style.display = 'none';
+    
+    const authPromise = isRegisterMode 
+        ? register(email, password)
+        : login(email, password);
+    
+    authPromise.then(() => {
+        showToast(isRegisterMode ? 'Registered successfully!' : 'Logged in successfully!', 'success');
+        hideAuthModal();
         location.reload();
     }).catch(err => {
-        showToast('Login failed: ' + err.message, 'error');
+        authError.textContent = err.message || (isRegisterMode ? 'Registration failed' : 'Login failed');
+        authError.style.display = 'block';
+        authSubmit.disabled = false;
+        authSubmit.textContent = isRegisterMode ? 'Register' : 'Login';
     });
 }
 
@@ -355,6 +431,9 @@ async function handlePlaidSuccess(publicToken, metadata) {
 
         const accountsData = await accountsResponse.json();
         
+        // Track newly added account IDs for efficient syncing
+        const newlyAddedAccountIds = [];
+        
         // Add accounts to our system
         for (const plaidAccount of accountsData.accounts) {
             // Check if account already exists
@@ -378,6 +457,7 @@ async function handlePlaidSuccess(publicToken, metadata) {
 
                 accounts.push(newAccount);
                 dirtyAccounts.add(newAccount.id); // Mark as changed
+                newlyAddedAccountIds.push(newAccount.id); // Track for syncing
                 
                 // Store item_id mapping (NO access token)
                 plaidItemIds.set(newAccount.id, {
@@ -403,14 +483,21 @@ async function handlePlaidSuccess(publicToken, metadata) {
         renderAccounts();
         updateTotalBalance();
         populateAccountFilters();
+        
+        // OPTIMIZATION: Sync only newly added accounts, not all accounts
+        if (newlyAddedAccountIds.length > 0) {
+            showToast(`Syncing ${newlyAddedAccountIds.length} new account(s)...`, 'info');
+            await syncAllTransactions(newlyAddedAccountIds);
+        }
         if (window.populateTransactionAccountSelect) {
             window.populateTransactionAccountSelect();
         }
         
-        showToast(`${accountsData.accounts.length} account(s) added successfully!`, 'success');
-        
-        // Automatically sync transactions
-        await syncAllTransactions();
+        if (newlyAddedAccountIds.length > 0) {
+            showToast(`${newlyAddedAccountIds.length} account(s) added and synced successfully!`, 'success');
+        } else {
+            showToast(`${accountsData.accounts.length} account(s) added successfully!`, 'success');
+        }
         
     } catch (error) {
         console.error('Error handling Plaid success:', error);
@@ -444,215 +531,245 @@ function showPlaidError(message) {
 
 // Sync transactions from Plaid for selected accounts
 async function syncAllTransactions(accountIdsToSync = null) {
+    const syncBtn = document.getElementById('sync-btn');
+    const syncBtnText = document.getElementById('sync-btn-text');
+    
     try {
+        // Set loading state
+        setLoading('sync', true, syncBtn);
+        if (syncBtnText) {
+            syncBtnText.textContent = 'Syncing...';
+        }
         showToast('Syncing transactions...', 'info');
         
-        let syncedCount = 0;
-        let modifiedCount = 0;
-        let removedCount = 0;
+        // Wrap with error handler
+        const wrappedSync = typeof errorHandler !== 'undefined' 
+            ? errorHandler.wrapAsync(() => syncAllTransactionsInternal(accountIdsToSync), 'syncAllTransactions')
+            : () => syncAllTransactionsInternal(accountIdsToSync);
         
-        // If no account IDs specified, sync all Plaid accounts
-        const accountsToSync = accountIdsToSync || Array.from(plaidItemIds.keys());
+        await wrappedSync();
+    } catch (error) {
+        // Error already handled by errorHandler if available
+        if (typeof errorHandler === 'undefined') {
+            console.error('Error syncing transactions:', error);
+            showToast('Error syncing transactions: ' + (error.message || 'Unknown error'), 'error');
+        }
+    } finally {
+        // Clear loading state
+        setLoading('sync', false, syncBtn);
         
-        // Sync transactions for each selected account (using item_id, backend retrieves access token)
-        for (const accountId of accountsToSync) {
-            const plaidData = plaidItemIds.get(accountId);
-            if (!plaidData) continue;
-            try {
-                const account = accounts.find(acc => acc.id === accountId);
-                if (!account || !account.plaidItemId) continue;
-                
-                let currentCursor = plaidData.cursor || null;
-                let hasMore = true;
-                let pageCount = 0;
-                const maxPages = 100; // Safety limit to prevent infinite loops
-                
-                // Loop to handle pagination - fetch ALL pages until has_more is false
-                while (hasMore && pageCount < maxPages) {
-                    pageCount++;
-                    
-                    // Get transactions from Plaid (backend handles access token)
-                    const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            item_id: account.plaidItemId,
-                            cursor: currentCursor,
-                        }),
-                    });
+        // Update sync button status AFTER clearing loading state
+        // This ensures the sync time is saved and displayed correctly
+        setTimeout(() => {
+            updateSyncButtonStatus();
+        }, 100); // Small delay to ensure localStorage is written
+    }
+}
 
-                    if (!response.ok) {
-                        console.error(`Failed to sync transactions for account ${accountId}`);
-                        break;
-                    }
+// Internal sync function (separated for error handling)
+async function syncAllTransactionsInternal(accountIdsToSync = null) {
+    let syncedCount = 0;
+    let modifiedCount = 0;
+    let removedCount = 0;
+    
+    // If no account IDs specified, sync all Plaid accounts
+    const accountsToSync = accountIdsToSync || Array.from(plaidItemIds.keys());
+    
+    // Sync transactions for each selected account (using item_id, backend retrieves access token)
+    for (const accountId of accountsToSync) {
+        const plaidData = plaidItemIds.get(accountId);
+        if (!plaidData) continue;
+        try {
+            const account = accounts.find(acc => acc.id === accountId);
+            if (!account || !account.plaidItemId) continue;
+            
+            let currentCursor = plaidData.cursor || null;
+            let hasMore = true;
+            let pageCount = 0;
+            const maxPages = 100; // Safety limit to prevent infinite loops
+            
+            // Loop to handle pagination - fetch ALL pages until has_more is false
+            while (hasMore && pageCount < maxPages) {
+                pageCount++;
+                
+                // Get transactions from Plaid (backend handles access token)
+                const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        item_id: account.plaidItemId,
+                        cursor: currentCursor,
+                    }),
+                });
 
-                    const syncData = await response.json();
+                if (!response.ok) {
+                    console.error(`Failed to sync transactions for account ${accountId}`);
+                    break;
+                }
+
+                const syncData = await response.json();
+                
+                // Process added transactions
+                for (const plaidTransaction of syncData.transactions) {
+                    // Check if transaction already exists
+                    const existingTransaction = transactions.find(
+                        t => t.plaidTransactionId === plaidTransaction.transaction_id
+                    );
                     
-                    // Process added transactions
-                    for (const plaidTransaction of syncData.transactions) {
-                        // Check if transaction already exists
-                        const existingTransaction = transactions.find(
-                            t => t.plaidTransactionId === plaidTransaction.transaction_id
-                        );
+                    // Match by account_id OR by our accountId if plaidAccountId matches
+                    const accountMatches = plaidTransaction.account_id === account.plaidAccountId;
+                    
+                    if (!existingTransaction && accountMatches) {
+                        // Map Plaid transaction to our transaction format
+                        const newTransaction = {
+                            id: transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1,
+                            date: plaidTransaction.date, // Plaid returns YYYY-MM-DD format - keep as string
+                            merchant: plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown',
+                            amount: plaidTransaction.amount, // Plaid convention: positive = expense, negative = income
+                            category: plaidTransaction.category ? plaidTransaction.category[0] : '',
+                            status: plaidTransaction.pending ? 'pending' : 'posted',
+                            accountId: accountId,
+                            accountType: (account.type === 'credit' || account.type === 'loan') ? 'credit' : 'debit',
+                            plaidTransactionId: plaidTransaction.transaction_id,
+                            plaidAccountId: plaidTransaction.account_id,
+                            updated: false,
+                            isNew: true, // Mark as new transaction for highlighting
+                        };
                         
-                        // Match by account_id OR by our accountId if plaidAccountId matches
-                        const accountMatches = plaidTransaction.account_id === account.plaidAccountId;
-                        
-                        if (!existingTransaction && accountMatches) {
-                            // Map Plaid transaction to our transaction format
-                            const newTransaction = {
-                                id: transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1,
-                                date: plaidTransaction.date, // Plaid returns YYYY-MM-DD format - keep as string
-                                merchant: plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown',
-                                amount: plaidTransaction.amount, // Plaid convention: positive = expense, negative = income
-                                category: plaidTransaction.category ? plaidTransaction.category[0] : '',
-                                status: plaidTransaction.pending ? 'pending' : 'posted',
-                                accountId: accountId,
-                                accountType: (account.type === 'credit' || account.type === 'loan') ? 'credit' : 'debit',
-                                plaidTransactionId: plaidTransaction.transaction_id,
-                                plaidAccountId: plaidTransaction.account_id,
-                                updated: false,
-                                isNew: true, // Mark as new transaction for highlighting
-                            };
-                            
-                            transactions.push(newTransaction);
-                            dirtyTransactions.add(newTransaction.id); // Mark as changed
-                            syncedCount++;
-                        }
-                    }
-                    
-                    // Process modified transactions
-                    for (const plaidTransaction of syncData.modified) {
-                        const existingTransaction = transactions.find(
-                            t => t.plaidTransactionId === plaidTransaction.transaction_id
-                        );
-                        
-                        if (existingTransaction) {
-                            existingTransaction.date = plaidTransaction.date;
-                            existingTransaction.merchant = plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown';
-                            existingTransaction.amount = plaidTransaction.amount;
-                            existingTransaction.category = plaidTransaction.category ? plaidTransaction.category[0] : '';
-                            existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
-                            existingTransaction.updated = true;
-                            dirtyTransactions.add(existingTransaction.id); // Mark as changed
-                            modifiedCount++;
-                        }
-                    }
-                    
-                    // Process removed transactions
-                    for (const removedTransaction of syncData.removed) {
-                        const existingTransaction = transactions.find(
-                            t => t.plaidTransactionId === removedTransaction.transaction_id
-                        );
-                        
-                        if (existingTransaction) {
-                            existingTransaction.status = 'removed';
-                            dirtyTransactions.add(existingTransaction.id); // Mark as changed
-                            removedCount++;
-                        }
-                    }
-                    
-                    // Update cursor for next iteration
-                    currentCursor = syncData.next_cursor;
-                    hasMore = syncData.has_more || false;
-                    
-                    // If no more pages, break out of loop
-                    if (!hasMore) {
-                        break;
+                        transactions.push(newTransaction);
+                        dirtyTransactions.add(newTransaction.id); // Mark as changed
+                        syncedCount++;
                     }
                 }
                 
-                // Update cursor in account data (always update, even if no new transactions)
-                account.plaidCursor = currentCursor;
-                dirtyAccounts.add(accountId); // Mark account as changed (cursor updated)
+                // Process modified transactions
+                for (const plaidTransaction of syncData.modified) {
+                    const existingTransaction = transactions.find(
+                        t => t.plaidTransactionId === plaidTransaction.transaction_id
+                    );
+                    
+                    if (existingTransaction) {
+                        existingTransaction.date = plaidTransaction.date;
+                        existingTransaction.merchant = plaidTransaction.merchant_name || plaidTransaction.name || 'Unknown';
+                        existingTransaction.amount = plaidTransaction.amount;
+                        existingTransaction.category = plaidTransaction.category ? plaidTransaction.category[0] : '';
+                        existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
+                        existingTransaction.updated = true;
+                        dirtyTransactions.add(existingTransaction.id); // Mark as changed
+                        modifiedCount++;
+                    }
+                }
                 
-                // Update cursor in plaidItemIds map
-                plaidItemIds.set(accountId, {
-                    ...plaidData,
-                    cursor: currentCursor,
+                // Process removed transactions
+                for (const removedTransaction of syncData.removed) {
+                    const existingTransaction = transactions.find(
+                        t => t.plaidTransactionId === removedTransaction.transaction_id
+                    );
+                    
+                    if (existingTransaction) {
+                        existingTransaction.status = 'removed';
+                        dirtyTransactions.add(existingTransaction.id); // Mark as changed
+                        removedCount++;
+                    }
+                }
+                
+                // Update cursor for next iteration
+                currentCursor = syncData.next_cursor;
+                hasMore = syncData.has_more || false;
+                
+                // If no more pages, break out of loop
+                if (!hasMore) {
+                    break;
+                }
+            }
+            
+            // Update cursor in account data (always update, even if no new transactions)
+            account.plaidCursor = currentCursor;
+            dirtyAccounts.add(accountId); // Mark account as changed (cursor updated)
+            
+            // Update cursor in plaidItemIds map
+            plaidItemIds.set(accountId, {
+                ...plaidData,
+                cursor: currentCursor,
+            });
+            
+            // CRITICAL: Immediately save cursor to ensure it's persisted
+            // This ensures cursor is saved even if sync fails later
+            await saveData();
+            
+            // Update account balance from Plaid (for ALL account types)
+            // Fetch latest account balances after syncing transactions
+            try {
+                const accountsResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        item_id: account.plaidItemId,
+                    }),
                 });
                 
-                // CRITICAL: Immediately save cursor to ensure it's persisted
-                // This ensures cursor is saved even if sync fails later
-                await saveData();
-                
-                // Update account balance from Plaid (for ALL account types)
-                // Fetch latest account balances after syncing transactions
-                try {
-                    const accountsResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            item_id: account.plaidItemId,
-                        }),
-                    });
-                    
-                    if (accountsResponse.ok) {
-                        const accountsData = await accountsResponse.json();
-                        const plaidAccount = accountsData.accounts.find(a => a.account_id === account.plaidAccountId);
-                        if (plaidAccount && plaidAccount.balances) {
-                            // Update balance from Plaid for ALL account types
-                            account.balance = plaidAccount.balances.current || account.balance;
-                            // Update initialBalance to track the latest balance from Plaid
-                            account.initialBalance = plaidAccount.balances.current || account.initialBalance;
-                            dirtyAccounts.add(accountId); // Mark account as changed (balance updated)
-                        }
+                if (accountsResponse.ok) {
+                    const accountsData = await accountsResponse.json();
+                    const plaidAccount = accountsData.accounts.find(a => a.account_id === account.plaidAccountId);
+                    if (plaidAccount && plaidAccount.balances) {
+                        // Update balance from Plaid for ALL account types
+                        account.balance = plaidAccount.balances.current || account.balance;
+                        // Update initialBalance to track the latest balance from Plaid
+                        account.initialBalance = plaidAccount.balances.current || account.initialBalance;
+                        dirtyAccounts.add(accountId); // Mark account as changed (balance updated)
                     }
-                } catch (balanceError) {
-                    // Silently fail balance update - not critical
                 }
-                
-            } catch (error) {
+            } catch (balanceError) {
+                // Silently fail balance update - not critical
+            }
+            
+        } catch (error) {
+            if (typeof errorHandler !== 'undefined') {
+                errorHandler.handle(error, `syncAccount-${accountId}`, false);
+            } else {
                 console.error(`Error syncing account ${accountId}:`, error);
             }
         }
+    }
+    
+    // Always save data (even if no new transactions, cursor might have changed)
+    // CRITICAL: Ensure cursor is persisted for next sync
+    await saveData();
+    
+    // Record sync time for each synced account
+    const syncTimestamp = Date.now();
+    accountsToSync.forEach(accountId => {
+        saveAccountSyncTime(accountId, syncTimestamp);
+    });
+    
+    if (syncedCount > 0 || modifiedCount > 0 || removedCount > 0) {
+        invalidateCache();
+        calculateAccountBalances();
+        filterTransactions();
+        initializeDashboard();
         
-        // Always save data (even if no new transactions, cursor might have changed)
-        // CRITICAL: Ensure cursor is persisted for next sync
-        await saveData();
-        
-        // Record sync time for each synced account
-        const syncTimestamp = Date.now();
-        accountsToSync.forEach(accountId => {
-            saveAccountSyncTime(accountId, syncTimestamp);
-        });
-        
-        if (syncedCount > 0 || modifiedCount > 0 || removedCount > 0) {
-            invalidateCache();
-            calculateAccountBalances();
-            filterTransactions();
-            initializeDashboard();
-            
-            // Remove "new" highlight after 10 seconds
-            if (syncedCount > 0) {
-                setTimeout(() => {
-                    transactions.forEach(t => {
-                        if (t.isNew) {
-                            delete t.isNew;
-                        }
-                    });
-                    saveData();
-                    renderTransactions();
-                }, 10000); // 10 seconds
-            }
-            
-            let message = '';
-            if (syncedCount > 0) message += `Synced ${syncedCount} new transaction(s)`;
-            if (modifiedCount > 0) message += (message ? ', ' : '') + `Updated ${modifiedCount} transaction(s)`;
-            if (removedCount > 0) message += (message ? ', ' : '') + `Removed ${removedCount} transaction(s)`;
-            
-            showToast(message || 'Sync complete', 'success');
-        } else {
-            // Still refresh UI even if no new transactions (cursor was updated)
-            filterTransactions();
-            initializeDashboard();
-            showToast('No new transactions to sync', 'info');
+        // Remove "new" highlight after 10 seconds
+        if (syncedCount > 0) {
+            setTimeout(() => {
+                transactions.forEach(t => {
+                    if (t.isNew) {
+                        delete t.isNew;
+                    }
+                });
+                saveData();
+                renderTransactions();
+            }, 10000); // 10 seconds
         }
         
-        // Update sync button status after sync
-        updateSyncButtonStatus();
+        let message = '';
+        if (syncedCount > 0) message += `Synced ${syncedCount} new transaction(s)`;
+        if (modifiedCount > 0) message += (message ? ', ' : '') + `Updated ${modifiedCount} transaction(s)`;
+        if (removedCount > 0) message += (message ? ', ' : '') + `Removed ${removedCount} transaction(s)`;
         
-    } catch (error) {
-        console.error('Error syncing transactions:', error);
-        showToast('Error syncing transactions: ' + error.message, 'error');
+        showToast(message || 'Sync complete', 'success');
+    } else {
+        // Still refresh UI even if no new transactions (cursor was updated)
+        filterTransactions();
+        initializeDashboard();
+        showToast('No new transactions to sync', 'info');
     }
 }
 
@@ -880,7 +997,15 @@ let dateFilter = { type: 'current-month', startDate: null, endDate: null };
 
 // Clear All Data Function
 async function clearAllData() {
+    const clearBtn = document.getElementById('clear-data-btn');
+    
     try {
+        // Set loading state
+        setLoading('clear', true, clearBtn);
+        if (clearBtn) {
+            clearBtn.textContent = 'Clearing...';
+        }
+        
         if (!db) await initDB();
         
         // Clear dirty sets
@@ -985,6 +1110,20 @@ async function clearAllData() {
     } catch (error) {
         showToast('Error clearing data: ' + error.message, 'error');
         console.error('Clear data error:', error);
+    } finally {
+        // Clear loading state
+        setLoading('clear', false, clearBtn);
+        if (clearBtn) {
+            clearBtn.innerHTML = `
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                Clear All Data
+            `;
+        }
     }
 }
 
@@ -1017,15 +1156,21 @@ function showDeleteTransactionModal(id) {
     // Format amount: Plaid convention - positive = expense (red), negative = income (green)
     const amountColor = transaction.amount >= 0 ? 'var(--danger-color)' : 'var(--success-color)';
     
+    // Use safe HTML escaping for user-generated content
+    const safeMerchant = escapeHTML(transaction.merchant || 'N/A');
+    const safeCategory = escapeHTML(transaction.category || 'Exempt');
+    const safeAccountName = escapeHTML(accountName);
+    const safeStatus = escapeHTML(transaction.status || 'Posted');
+    
     detailsEl.innerHTML = `
         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Merchant:</span>
-                <span style="font-weight: 600; color: var(--text-primary);">${transaction.merchant || 'N/A'}</span>
+                <span style="font-weight: 600; color: var(--text-primary);">${safeMerchant}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Date:</span>
-                <span style="font-weight: 600; color: var(--text-primary);">${formattedDate}</span>
+                <span style="font-weight: 600; color: var(--text-primary);">${escapeHTML(formattedDate)}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Amount:</span>
@@ -1033,15 +1178,15 @@ function showDeleteTransactionModal(id) {
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Category:</span>
-                <span style="font-weight: 600; color: var(--text-primary);">${transaction.category || 'Exempt'}</span>
+                <span style="font-weight: 600; color: var(--text-primary);">${safeCategory}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Account:</span>
-                <span style="font-weight: 600; color: var(--text-primary);">${accountName}</span>
+                <span style="font-weight: 600; color: var(--text-primary);">${safeAccountName}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: var(--text-secondary);">Status:</span>
-                <span style="font-weight: 600; color: var(--text-primary); text-transform: capitalize;">${transaction.status || 'Posted'}</span>
+                <span style="font-weight: 600; color: var(--text-primary); text-transform: capitalize;">${safeStatus}</span>
             </div>
         </div>
     `;
@@ -1226,10 +1371,15 @@ async function deleteAccount(id) {
 
 // CSV Export Function
 function exportToCSV() {
+    const exportBtn = document.getElementById('export-btn');
+    
     if (filteredTransactions.length === 0) {
         showToast('No transactions to export', 'error');
         return;
     }
+    
+    // Set loading state
+    setLoading('export', true, exportBtn);
     
     const headers = ['Date', 'Merchant', 'Amount', 'Category', 'Status', 'Account'];
     const rows = filteredTransactions.map(t => {
@@ -1269,7 +1419,10 @@ function exportToCSV() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     
+    // Clear loading state
+    setLoading('export', false, exportBtn);
     showToast('Transactions exported successfully', 'success');
 }
 
@@ -1487,6 +1640,55 @@ function showToast(message, type = 'success') {
     }, 3000);
 }
 
+// Loading State Management
+let loadingStates = new Map(); // Track loading states by key
+
+function setLoading(key, isLoading, element = null) {
+    loadingStates.set(key, isLoading);
+    
+    // If element provided, update it directly
+    if (element) {
+        if (isLoading) {
+            element.disabled = true;
+            element.dataset.originalText = element.textContent || element.innerHTML;
+            if (element.tagName === 'BUTTON') {
+                element.innerHTML = '<span style="display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 0.5rem;"></span>' + (element.dataset.originalText || 'Loading...');
+            }
+        } else {
+            element.disabled = false;
+            if (element.dataset.originalText) {
+                element.textContent = element.dataset.originalText;
+                delete element.dataset.originalText;
+            }
+        }
+    }
+}
+
+function isLoading(key) {
+    return loadingStates.get(key) || false;
+}
+
+// Safe HTML helper - prevents XSS by escaping user input
+function safeSetHTML(element, html) {
+    if (!element) return;
+    // For trusted HTML (like our own templates), use innerHTML
+    // For user-generated content, use textContent
+    element.innerHTML = html;
+}
+
+function safeSetText(element, text) {
+    if (!element) return;
+    // Always use textContent for user-generated content to prevent XSS
+    element.textContent = text;
+}
+
+function escapeHTML(text) {
+    if (typeof text !== 'string') return text;
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Calculate Account Balances from Transactions
 // Note: ALL Plaid-connected accounts use balances directly from Plaid, not calculated from transactions
 // Only manually created accounts calculate balances from transactions
@@ -1571,56 +1773,123 @@ function validateAccountForm() {
 }
 
 function validateCategoryForm() {
-    const name = document.getElementById('category-name').value.trim();
-    const allocation = parseFloat(document.getElementById('category-allocation').value);
-    
-    if (!name) {
-        showToast('Category name is required', 'error');
+    try {
+        const nameInput = document.getElementById('category-name');
+        const allocationInput = document.getElementById('category-allocation');
+        
+        if (!nameInput || !allocationInput) {
+            if (typeof errorHandler !== 'undefined') {
+                errorHandler.handle('Form fields not found', 'validateCategoryForm', true);
+            } else {
+                showToast('Form error: fields not found', 'error');
+            }
+            return false;
+        }
+        
+        const name = Validator.sanitize(nameInput.value);
+        const allocation = allocationInput.value;
+        
+        // Validate name
+        const nameValidation = Validator.validateCategoryName(name);
+        if (!nameValidation.valid) {
+            showToast(nameValidation.error, 'error');
+            nameInput.focus();
+            return false;
+        }
+        
+        // Validate allocation
+        const allocationValidation = Validator.validateAllocation(allocation);
+        if (!allocationValidation.valid) {
+            showToast(allocationValidation.error, 'error');
+            allocationInput.focus();
+            return false;
+        }
+        
+        // Check for duplicate category names
+        const existingCategory = categories.find(c => c.name.toLowerCase() === nameValidation.value.toLowerCase() && c.id !== editingCategoryId);
+        if (existingCategory) {
+            showToast('A category with this name already exists', 'error');
+            nameInput.focus();
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
+        if (typeof errorHandler !== 'undefined') {
+            errorHandler.handle(error, 'validateCategoryForm', true);
+        } else {
+            showToast('Validation error occurred', 'error');
+        }
         return false;
     }
-    
-    // Check for duplicate category names
-    const existingCategory = categories.find(c => c.name.toLowerCase() === name.toLowerCase() && c.id !== editingCategoryId);
-    if (existingCategory) {
-        showToast('A category with this name already exists', 'error');
-        return false;
-    }
-    
-    if (isNaN(allocation) || allocation < 0) {
-        showToast('Allocation must be a positive number', 'error');
-        return false;
-    }
-    
-    return true;
 }
 
 function validateTransactionForm() {
-    const date = document.getElementById('transaction-date').value;
-    const merchant = document.getElementById('transaction-merchant').value.trim();
-    const amount = parseFloat(document.getElementById('transaction-amount').value);
-    const accountId = document.getElementById('transaction-account').value;
-    
-    if (!date) {
-        showToast('Date is required', 'error');
+    try {
+        const dateInput = document.getElementById('transaction-date');
+        const merchantInput = document.getElementById('transaction-merchant');
+        const amountInput = document.getElementById('transaction-amount');
+        const accountInput = document.getElementById('transaction-account');
+        
+        if (!dateInput || !merchantInput || !amountInput || !accountInput) {
+            if (typeof errorHandler !== 'undefined') {
+                errorHandler.handle('Form fields not found', 'validateTransactionForm', true);
+            } else {
+                showToast('Form error: fields not found', 'error');
+            }
+            return false;
+        }
+        
+        const date = dateInput.value;
+        const merchant = Validator.sanitize(merchantInput.value);
+        const amount = amountInput.value;
+        const accountId = accountInput.value;
+        
+        // Validate date
+        const dateValidation = Validator.validateDate(date);
+        if (!dateValidation.valid) {
+            showToast(dateValidation.error, 'error');
+            dateInput.focus();
+            return false;
+        }
+        
+        // Validate merchant
+        const merchantValidation = Validator.validateMerchant(merchant);
+        if (!merchantValidation.valid) {
+            showToast(merchantValidation.error, 'error');
+            merchantInput.focus();
+            return false;
+        }
+        
+        // Validate amount (allow negative for income)
+        const amountValidation = Validator.validateAmount(amount);
+        if (!amountValidation.valid) {
+            showToast(amountValidation.error, 'error');
+            amountInput.focus();
+            return false;
+        }
+        
+        if (amountValidation.value === 0) {
+            showToast('Amount cannot be zero', 'error');
+            amountInput.focus();
+            return false;
+        }
+        
+        if (!accountId) {
+            showToast('Account is required', 'error');
+            accountInput.focus();
+            return false;
+        }
+        
+        return true;
+    } catch (error) {
+        if (typeof errorHandler !== 'undefined') {
+            errorHandler.handle(error, 'validateTransactionForm', true);
+        } else {
+            showToast('Validation error occurred', 'error');
+        }
         return false;
     }
-    
-    if (!merchant) {
-        showToast('Merchant name is required', 'error');
-        return false;
-    }
-    
-    if (isNaN(amount) || amount <= 0) {
-        showToast('Amount must be a positive number', 'error');
-        return false;
-    }
-    
-    if (!accountId) {
-        showToast('Account is required', 'error');
-        return false;
-    }
-    
-    return true;
 }
 
 function validateDateRange() {
@@ -1848,6 +2117,11 @@ function renderAccountsExpanded() {
         // Get account icon based on type
         const accountIcon = getAccountIcon(acc.type, acc.subtype);
         
+        // Escape user-generated content to prevent XSS
+        const safeAccountName = escapeHTML(acc.name);
+        const safeAccountTypeLabel = escapeHTML(accountTypeLabel);
+        const safeMask = escapeHTML(acc.mask);
+        
         accountEl.innerHTML = `
             <div class="account-item-drag-handle" title="Drag to reorder">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1864,10 +2138,10 @@ function renderAccountsExpanded() {
                     <div class="account-item-icon">${accountIcon}</div>
                     <div class="account-item-info">
                         <div class="account-item-name-row">
-                            <span class="account-item-name">${acc.name}</span>
-                            <span class="account-item-type">${accountTypeLabel}</span>
+                            <span class="account-item-name">${safeAccountName}</span>
+                            <span class="account-item-type">${safeAccountTypeLabel}</span>
                         </div>
-                        <span class="account-item-mask">••••${acc.mask}</span>
+                        <span class="account-item-mask">••••${safeMask}</span>
                     </div>
                     <div class="account-item-balance ${balanceClass}">${formatCurrency(acc.balance)}</div>
                 </div>
@@ -2748,8 +3022,10 @@ function renderCategoriesSummary() {
         const spent = categorySpending[cat.name] || 0;
         const chip = document.createElement('div');
         chip.className = 'category-chip';
+        // Escape category name to prevent XSS and ensure proper display
+        const safeCategoryName = escapeHTML(cat.name);
         chip.innerHTML = `
-            <span class="category-chip-name">${cat.name}</span>
+            <span class="category-chip-name">${safeCategoryName}</span>
             <span class="category-chip-amount">${formatCurrency(spent)}</span>
         `;
         summaryEl.appendChild(chip);
@@ -2795,9 +3071,11 @@ function renderCategoriesExpanded() {
         const spentPercent = (spent / cat.allocation) * 100;
         const isOverBudget = spent > cat.allocation;
 
+        // Escape category name to prevent XSS and ensure proper display
+        const safeCategoryName = escapeHTML(cat.name);
         categoryEl.innerHTML = `
             <div class="category-item-header">
-                <span class="category-item-name">${cat.name}</span>
+                <span class="category-item-name">${safeCategoryName}</span>
                 <div class="category-item-actions">
                     <button class="btn-small edit-category" data-id="${cat.id}">Edit</button>
                     <button class="btn-small delete-category" data-id="${cat.id}" style="color: var(--danger-color);">Delete</button>
@@ -2927,11 +3205,12 @@ function renderTransactionRow(transaction) {
     if (transaction.updated) row.classList.add('updated');
     if (transaction.isNew) row.classList.add('new-transaction');
 
-    // Build category select HTML
+    // Build category select HTML - escape category names for display
     const selectedCategory = transaction.category || '';
-    const categorySelectHTML = categories.map(cat => 
-        `<option value="${cat.name}" ${cat.name === selectedCategory ? 'selected' : ''}>${cat.name}</option>`
-    ).join('');
+    const categorySelectHTML = categories.map(cat => {
+        const safeCategoryName = escapeHTML(cat.name);
+        return `<option value="${escapeHTML(cat.name)}" ${cat.name === selectedCategory ? 'selected' : ''}>${safeCategoryName}</option>`;
+    }).join('');
     const categorySelect = `
         <select class="category-select" data-transaction-id="${transaction.id}">
             <option value="" ${!selectedCategory ? 'selected' : ''}>Exempt</option>
@@ -2945,17 +3224,23 @@ function renderTransactionRow(transaction) {
     const accountTypeBadge = account 
         ? (account.type === 'credit' ? 'Credit Card' : account.subtype.charAt(0).toUpperCase() + account.subtype.slice(1))
         : 'Unknown';
+    
+    // Escape user-generated content to prevent XSS
+    const safeMerchant = escapeHTML(transaction.merchant || '');
+    const safeAccountDisplay = escapeHTML(accountDisplay);
+    const safeAccountTypeBadge = escapeHTML(accountTypeBadge);
+    const safeStatus = escapeHTML(transaction.status || 'posted');
 
     row.innerHTML = `
         <td>${formatDate(transaction.date)}</td>
-        <td>${transaction.merchant}</td>
+        <td>${safeMerchant}</td>
         <td class="amount ${transaction.amount >= 0 ? 'negative' : 'positive'}">${formatCurrency(transaction.amount)}</td>
         <td>${categorySelect}</td>
-        <td><span class="transaction-status ${transaction.status}">${transaction.status}</span></td>
+        <td><span class="transaction-status ${transaction.status}">${safeStatus}</span></td>
         <td>
             <div class="transaction-account-display">
-                <div class="transaction-account-name">${accountDisplay}</div>
-                <span class="transaction-account-badge">${accountTypeBadge}</span>
+                <div class="transaction-account-name">${safeAccountDisplay}</div>
+                <span class="transaction-account-badge">${safeAccountTypeBadge}</span>
             </div>
         </td>
         <td class="actions-cell">
@@ -2998,14 +3283,89 @@ function renderTransactions() {
         return;
     }
 
-    // Render all transactions - ensure we're using filteredTransactions
-    filteredTransactions.forEach(t => {
-        const row = renderTransactionRow(t);
-        tbody.appendChild(row);
-    });
+    // Performance optimization: For large datasets, use batched rendering
+    // This prevents browser from freezing when rendering thousands of rows
+    const LARGE_DATASET_THRESHOLD = 500;
     
-    // Update sort indicators
-    updateSortIndicators();
+    // Debug: Log transaction count and date range
+    if (filteredTransactions.length > 0) {
+        // Get actual date range from filtered transactions (not sorted order)
+        const dates = filteredTransactions.map(t => {
+            if (typeof t.date === 'string') return t.date;
+            return new Date(t.date).toISOString().split('T')[0];
+        }).sort();
+        const earliestDate = dates[0];
+        const latestDate = dates[dates.length - 1];
+        const firstDisplayed = filteredTransactions[0].date;
+        const lastDisplayed = filteredTransactions[filteredTransactions.length - 1].date;
+        console.log(`Rendering ${filteredTransactions.length} transactions`);
+        console.log(`Date range in data: ${earliestDate} to ${latestDate}`);
+        console.log(`First displayed (sorted): ${firstDisplayed}, Last displayed: ${lastDisplayed}`);
+    }
+    
+    if (filteredTransactions.length > LARGE_DATASET_THRESHOLD) {
+        // Use batched rendering to prevent browser freeze
+        renderTransactionsBatched(filteredTransactions, tbody);
+    } else {
+        // Small dataset: render all at once
+        filteredTransactions.forEach(t => {
+            const row = renderTransactionRow(t);
+            tbody.appendChild(row);
+        });
+        updateSortIndicators();
+    }
+}
+
+// Batched rendering for large datasets (prevents browser freeze)
+function renderTransactionsBatched(transactionsToRender, tbody) {
+    const BATCH_SIZE = 100; // Render 100 rows at a time
+    let currentIndex = 0;
+    const totalCount = transactionsToRender.length;
+    
+    // Show loading indicator
+    const loadingRow = document.createElement('tr');
+    loadingRow.id = 'loading-indicator';
+    loadingRow.innerHTML = `<td colspan="7" style="text-align: center; padding: 1rem; color: var(--text-secondary);">
+        Rendering ${totalCount} transactions... (${currentIndex}/${totalCount})
+    </td>`;
+    tbody.appendChild(loadingRow);
+    
+    function renderBatch() {
+        const endIndex = Math.min(currentIndex + BATCH_SIZE, totalCount);
+        
+        // Remove loading indicator
+        const loadingEl = document.getElementById('loading-indicator');
+        if (loadingEl) loadingEl.remove();
+        
+        // Render batch
+        for (let i = currentIndex; i < endIndex; i++) {
+            const row = renderTransactionRow(transactionsToRender[i]);
+            tbody.appendChild(row);
+        }
+        
+        currentIndex = endIndex;
+        
+        // Update progress if not done
+        if (currentIndex < totalCount) {
+            const progressRow = document.createElement('tr');
+            progressRow.id = 'loading-indicator';
+            progressRow.innerHTML = `<td colspan="7" style="text-align: center; padding: 0.5rem; color: var(--text-secondary); font-size: 0.75rem;">
+                Rendering... ${currentIndex}/${totalCount} transactions
+            </td>`;
+            tbody.appendChild(progressRow);
+            
+            // Continue with next batch (use setTimeout to allow browser to breathe)
+            setTimeout(renderBatch, 0);
+        } else {
+            // All done - remove progress indicator and update sort
+            const progressEl = document.getElementById('loading-indicator');
+            if (progressEl) progressEl.remove();
+            updateSortIndicators();
+        }
+    }
+    
+    // Start rendering
+    renderBatch();
 }
 
 // Setup virtual scrolling listener
@@ -3242,10 +3602,53 @@ function getDateRange() {
             const endInput = document.getElementById('filter-date-end').value;
             
             if (startInput && endInput) {
-                // Use custom date range
-                range.startDate = new Date(startInput);
-                range.endDate = new Date(endInput);
-                range.endDate.setHours(23, 59, 59);
+                // Parse dates explicitly to avoid timezone issues
+                const startParts = startInput.split('-');
+                const endParts = endInput.split('-');
+                
+                if (startParts.length === 3 && endParts.length === 3) {
+                    // Create dates using local time (not UTC) to avoid timezone shifts
+                    const startDate = new Date(
+                        parseInt(startParts[0], 10), // year
+                        parseInt(startParts[1], 10) - 1, // month (0-indexed)
+                        parseInt(startParts[2], 10), // day
+                        0, 0, 0, 0 // hours, minutes, seconds, ms
+                    );
+                    
+                    const endDate = new Date(
+                        parseInt(endParts[0], 10), // year
+                        parseInt(endParts[1], 10) - 1, // month (0-indexed)
+                        parseInt(endParts[2], 10), // day
+                        23, 59, 59, 999 // hours, minutes, seconds, ms
+                    );
+                    
+                    // Handle backwards date ranges (user might enter end before start)
+                    if (startDate > endDate) {
+                        // Swap them - user probably meant the opposite
+                        range.startDate = endDate;
+                        range.endDate = startDate;
+                        range.endDate.setHours(23, 59, 59, 999);
+                    } else {
+                        range.startDate = startDate;
+                        range.endDate = endDate;
+                    }
+                } else {
+                    // Fallback to Date constructor
+                    const startDate = new Date(startInput);
+                    const endDate = new Date(endInput);
+                    startDate.setHours(0, 0, 0, 0);
+                    endDate.setHours(23, 59, 59, 999);
+                    
+                    // Handle backwards date ranges
+                    if (startDate > endDate) {
+                        range.startDate = endDate;
+                        range.endDate = startDate;
+                        range.endDate.setHours(23, 59, 59, 999);
+                    } else {
+                        range.startDate = startDate;
+                        range.endDate = endDate;
+                    }
+                }
             }
             break;
     }
@@ -3268,6 +3671,34 @@ function filterTransactions() {
     const accountFilter = document.getElementById('filter-account').value;
     const dateRange = getDateRange();
     const filterType = document.getElementById('filter-date-range').value;
+    
+    // Debug: Log date range for custom filters
+    if (filterType === 'custom' && dateRange.startDate && dateRange.endDate) {
+        const startStr = dateRange.startDate.toISOString().split('T')[0];
+        const endStr = dateRange.endDate.toISOString().split('T')[0];
+        console.log(`Filtering with custom range: ${startStr} to ${endStr}`);
+        console.log(`Total transactions before filter: ${transactions.length}`);
+        
+        // Check what transactions exist in the date range
+        const transactionsInRange = transactions.filter(t => {
+            if (typeof t.date === 'string') {
+                const txDate = t.date;
+                return txDate >= startStr && txDate <= endStr;
+            }
+            return false;
+        });
+        console.log(`Transactions that should match date range: ${transactionsInRange.length}`);
+        
+        // Show earliest and latest dates in ALL transactions
+        const allDates = transactions.map(t => {
+            if (typeof t.date === 'string') return t.date;
+            return new Date(t.date).toISOString().split('T')[0];
+        }).sort();
+        if (allDates.length > 0) {
+            console.log(`Earliest transaction in database: ${allDates[0]}`);
+            console.log(`Latest transaction in database: ${allDates[allDates.length - 1]}`);
+        }
+    }
 
     filteredTransactions = transactions.filter(t => {
         const categoryMatch = !categoryFilter || t.category === categoryFilter || (!t.category && categoryFilter === 'exempt');
@@ -3391,12 +3822,68 @@ function filterTransactions() {
             const endValue = endYear * 10000 + endMonth * 100 + endDay;
             
             // STRICT comparison - transaction must be >= start AND <= end
-            // For month filters, this ensures ONLY transactions from that exact month
-            dateMatch = txValue >= startValue && txValue <= endValue;
+            // Handle both forward and backward date ranges (swap if needed)
+            const actualStart = Math.min(startValue, endValue);
+            const actualEnd = Math.max(startValue, endValue);
+            dateMatch = txValue >= actualStart && txValue <= actualEnd;
         }
 
         return categoryMatch && statusMatch && accountMatch && dateMatch;
     });
+
+    // Apply current sort configuration (don't override user's sort preference)
+    // Use the sortTransactions function which respects sortConfig
+    if (sortConfig.column) {
+        filteredTransactions.sort((a, b) => {
+            let aVal, bVal;
+
+            switch (sortConfig.column) {
+                case 'date':
+                    // For date sorting, use string comparison if both are strings to avoid timezone issues
+                    if (typeof a.date === 'string' && typeof b.date === 'string') {
+                        aVal = a.date;
+                        bVal = b.date;
+                    } else {
+                        const aDate = new Date(a.date);
+                        const bDate = new Date(b.date);
+                        aVal = aDate.toISOString().split('T')[0];
+                        bVal = bDate.toISOString().split('T')[0];
+                    }
+                    break;
+                case 'merchant':
+                    aVal = (a.merchant || '').toLowerCase();
+                    bVal = (b.merchant || '').toLowerCase();
+                    break;
+                case 'amount':
+                    aVal = a.amount;
+                    bVal = b.amount;
+                    break;
+                case 'category':
+                    aVal = (a.category || '').toLowerCase();
+                    bVal = (b.category || '').toLowerCase();
+                    break;
+                case 'status':
+                    aVal = (a.status || '').toLowerCase();
+                    bVal = (b.status || '').toLowerCase();
+                    break;
+                default:
+                    return 0;
+            }
+
+            if (typeof aVal === 'string' && typeof bVal === 'string') {
+                if (sortConfig.direction === 'asc') {
+                    return aVal.localeCompare(bVal);
+                } else {
+                    return bVal.localeCompare(aVal);
+                }
+            } else {
+                // Numeric comparison
+                if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            }
+        });
+    }
 
     // POST-FILTER VALIDATION: For select-month, double-check and remove any transactions from other months
     if (filterType === 'select-month') {
@@ -3421,20 +3908,7 @@ function filterTransactions() {
         }
     }
 
-    // Always sort by date descending (newest first) after filtering
-    sortConfig.column = 'date';
-    sortConfig.direction = 'desc';
-    filteredTransactions.sort((a, b) => {
-        // Parse dates using string comparison to avoid timezone issues
-        // For YYYY-MM-DD format strings, we can compare directly
-        if (typeof a.date === 'string' && typeof b.date === 'string') {
-            return b.date.localeCompare(a.date); // Descending (newest first)
-        }
-        // Fallback to Date objects
-        const aDate = new Date(a.date);
-        const bDate = new Date(b.date);
-        return bDate - aDate; // Descending order (newest first)
-    });
+    // Sort is already applied above in filterTransactions, no need to sort again here
 
     // Invalidate cache when filtering changes
     invalidateCache();
@@ -3454,6 +3928,29 @@ function filterTransactions() {
 function setupEventListeners() {
     // Theme toggle
     document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+    
+    // Authentication modal
+    const authModal = document.getElementById('auth-modal');
+    const authForm = document.getElementById('auth-form');
+    const closeAuthModal = document.getElementById('close-auth-modal');
+    const authSwitchMode = document.getElementById('auth-switch-mode');
+    
+    if (authForm) {
+        authForm.addEventListener('submit', handleAuthSubmit);
+    }
+    if (closeAuthModal) {
+        closeAuthModal.addEventListener('click', hideAuthModal);
+    }
+    if (authSwitchMode) {
+        authSwitchMode.addEventListener('click', toggleAuthMode);
+    }
+    if (authModal) {
+        authModal.addEventListener('click', (e) => {
+            if (e.target === authModal) {
+                hideAuthModal();
+            }
+        });
+    }
     
     // Edit Total Balance
     document.getElementById('edit-total-balance').addEventListener('click', editTotalBalance);

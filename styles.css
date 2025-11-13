@@ -855,6 +855,15 @@ body {
     }
 }
 
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .transactions-table tbody tr.new-transaction:hover {
     background: rgba(34, 197, 94, 0.15);
 }

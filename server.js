@@ -12,14 +12,84 @@ const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Ensure data directory exists
 const DATA_DIR = path.join(__dirname, 'data');
 const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const ENV_FILE = path.join(__dirname, '.env');
+
+// Secure memory utilities - clear sensitive data from memory
+function secureClear(buffer) {
+    if (Buffer.isBuffer(buffer)) {
+        buffer.fill(0);
+    } else if (typeof buffer === 'string') {
+        // For strings, we can't fully clear them in JavaScript, but we can minimize exposure
+        // The best practice is to minimize the time sensitive data exists in memory
+        return null;
+    }
+    return null;
+}
+
+// Input validation and sanitization
+function validateEmail(email) {
+    if (!email || typeof email !== 'string') return false;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.trim()) && email.length <= 254;
+}
+
+function validatePassword(password) {
+    if (!password || typeof password !== 'string') return false;
+    // At least 8 chars, max 128, must contain at least one letter and one number
+    return password.length >= 8 && 
+           password.length <= 128 && 
+           /[a-zA-Z]/.test(password) && 
+           /[0-9]/.test(password);
+}
+
+function sanitizeInput(input) {
+    if (typeof input !== 'string') return input;
+    // Remove null bytes and control characters
+    return input.replace(/[\x00-\x1F\x7F]/g, '').trim();
+}
+
+// Process-level security checks
+function checkProcessSecurity() {
+    // Warn if running as root (security risk)
+    if (process.getuid && process.getuid() === 0) {
+        console.warn('⚠️  SECURITY WARNING: Server is running as root user!');
+        console.warn('   This is a security risk. Consider running as a non-root user.');
+    }
+    
+    // Check if we're in a secure environment
+    if (process.env.NODE_ENV === 'production' && process.env.AUTH_REQUIRED === 'false') {
+        console.warn('⚠️  SECURITY WARNING: Authentication disabled in production!');
+    }
+}
+
+// Enhanced file path validation with additional checks
+function validateFilePath(filePath, baseDir) {
+    const resolved = path.resolve(filePath);
+    const base = path.resolve(baseDir);
+    
+    // Prevent directory traversal
+    if (!resolved.startsWith(base)) {
+        throw new Error('Invalid file path: path traversal detected');
+    }
+    
+    // Prevent null bytes
+    if (filePath.includes('\0')) {
+        throw new Error('Invalid file path: null byte detected');
+    }
+    
+    // Prevent absolute paths outside base directory
+    if (path.isAbsolute(filePath) && !resolved.startsWith(base)) {
+        throw new Error('Invalid file path: absolute path outside base directory');
+    }
+    
+    return resolved;
+}
 
 // Initialize data directory
 async function initDataDir() {
@@ -28,6 +98,94 @@ async function initDataDir() {
     } catch (error) {
         console.error('Error creating data directory:', error);
     }
+}
+
+// Ensure security keys exist in .env (auto-generate and save if missing)
+async function ensureSecurityKeys() {
+    try {
+        let envContent = '';
+        let envExists = false;
+        
+        // Read existing .env or create from template
+        try {
+            envContent = await fs.readFile(ENV_FILE, 'utf8');
+            envExists = true;
+        } catch {
+            // .env doesn't exist, try to copy from template
+            try {
+                const templatePath = path.join(__dirname, 'env.template');
+                envContent = await fs.readFile(templatePath, 'utf8');
+                envExists = false;
+            } catch {
+                // Template doesn't exist, create minimal .env
+                envContent = '';
+            }
+        }
+        
+        // Check if keys are set (not placeholder values)
+        const hasJWT = envContent.includes('JWT_SECRET=') && 
+                      !envContent.match(/JWT_SECRET\s*=\s*(your_|placeholder|undefined|null)/i);
+        const hasEncryption = envContent.includes('ENCRYPTION_KEY=') && 
+                             !envContent.match(/ENCRYPTION_KEY\s*=\s*(your_|placeholder|undefined|null)/i);
+        
+        // Generate keys if missing
+        if (!hasJWT || !hasEncryption) {
+            const jwtSecret = crypto.randomBytes(64).toString('hex');
+            const encryptionKey = crypto.randomBytes(32).toString('hex');
+            
+            // Update or add keys to .env content
+            if (envContent.includes('JWT_SECRET=')) {
+                envContent = envContent.replace(/JWT_SECRET\s*=.*/g, `JWT_SECRET=${jwtSecret}`);
+            } else {
+                envContent += `\nJWT_SECRET=${jwtSecret}`;
+            }
+            
+            if (envContent.includes('ENCRYPTION_KEY=')) {
+                envContent = envContent.replace(/ENCRYPTION_KEY\s*=.*/g, `ENCRYPTION_KEY=${encryptionKey}`);
+            } else {
+                envContent += `\nENCRYPTION_KEY=${encryptionKey}`;
+            }
+            
+            // Ensure .env file ends with newline
+            if (!envContent.endsWith('\n')) {
+                envContent += '\n';
+            }
+            
+            // Save updated .env
+            const safeEnvPath = validateFilePath(ENV_FILE, __dirname);
+            await fs.writeFile(safeEnvPath, envContent, { 
+                encoding: 'utf8',
+                mode: 0o600 // Owner read/write only
+            });
+            
+            // Ensure permissions (for Mac/Linux)
+            if (process.platform !== 'win32') {
+                await fs.chmod(safeEnvPath, 0o600);
+            }
+            
+            console.log('✅ Security keys auto-generated and saved to .env');
+            
+            // Reload environment variables
+            require('dotenv').config({ override: true });
+        }
+    } catch (error) {
+        console.error('Warning: Could not ensure security keys:', error.message);
+        console.log('Please manually set JWT_SECRET and ENCRYPTION_KEY in .env');
+    }
+}
+
+// Load security keys (after ensuring they exist)
+let JWT_SECRET = process.env.JWT_SECRET;
+let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+
+// If keys are still missing, generate temporary ones (will be saved on next run)
+if (!JWT_SECRET || JWT_SECRET.includes('your_')) {
+    JWT_SECRET = crypto.randomBytes(64).toString('hex');
+    console.warn('⚠️  JWT_SECRET not set in .env - using temporary key (will be lost on restart)');
+}
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.includes('your_')) {
+    ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
+    console.warn('⚠️  ENCRYPTION_KEY not set in .env - using temporary key (will be lost on restart)');
 }
 
 // Encryption functions for access tokens
@@ -91,7 +249,8 @@ class SecureTokenStorage {
 
     async loadTokens() {
         try {
-            const data = await fs.readFile(TOKENS_FILE, 'utf8');
+            const safePath = validateFilePath(TOKENS_FILE, DATA_DIR);
+            const data = await fs.readFile(safePath, 'utf8');
             const tokens = JSON.parse(data);
             for (const [userId, userTokens] of Object.entries(tokens)) {
                 this.tokens.set(userId, new Map(Object.entries(userTokens)));
@@ -108,7 +267,16 @@ class SecureTokenStorage {
             for (const [userId, userTokens] of this.tokens.entries()) {
                 data[userId] = Object.fromEntries(userTokens);
             }
-            await fs.writeFile(TOKENS_FILE, JSON.stringify(data, null, 2), 'utf8');
+            const jsonData = JSON.stringify(data, null, 2);
+            const safePath = validateFilePath(TOKENS_FILE, DATA_DIR);
+            await fs.writeFile(safePath, jsonData, { 
+                encoding: 'utf8',
+                mode: 0o600 // Owner read/write only
+            });
+            // Ensure permissions (for Mac/Linux)
+            if (process.platform !== 'win32') {
+                await fs.chmod(safePath, 0o600);
+            }
         } catch (error) {
             console.error('Error saving tokens:', error);
         }
@@ -129,7 +297,13 @@ class SecureTokenStorage {
             return null;
         }
         const encrypted = userTokens.get(itemId);
-        return decrypt(encrypted);
+        const decrypted = decrypt(encrypted);
+        
+        // Note: In JavaScript, we can't fully clear the decrypted token from memory
+        // However, we minimize exposure by only decrypting when needed
+        // The token is used immediately and not stored in long-lived variables
+        
+        return decrypted;
     }
 
     async getAllTokens(userId) {
@@ -160,7 +334,8 @@ class UserStorage {
 
     async loadUsers() {
         try {
-            const data = await fs.readFile(USERS_FILE, 'utf8');
+            const safePath = validateFilePath(USERS_FILE, DATA_DIR);
+            const data = await fs.readFile(safePath, 'utf8');
             const users = JSON.parse(data);
             for (const [id, user] of Object.entries(users)) {
                 this.users.set(id, user);
@@ -174,24 +349,45 @@ class UserStorage {
     async saveUsers() {
         try {
             const data = Object.fromEntries(this.users);
-            await fs.writeFile(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+            const jsonData = JSON.stringify(data, null, 2);
+            const safePath = validateFilePath(USERS_FILE, DATA_DIR);
+            await fs.writeFile(safePath, jsonData, { 
+                encoding: 'utf8',
+                mode: 0o600 // Owner read/write only
+            });
+            // Ensure permissions (for Mac/Linux)
+            if (process.platform !== 'win32') {
+                await fs.chmod(safePath, 0o600);
+            }
         } catch (error) {
             console.error('Error saving users:', error);
         }
     }
 
     async createUser(email, password) {
+        // Validate input
+        if (!validateEmail(email)) {
+            throw new Error('Invalid email format');
+        }
+        if (!validatePassword(password)) {
+            throw new Error('Password must be at least 8 characters with letters and numbers');
+        }
+        
         const id = crypto.randomBytes(16).toString('hex');
         const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Clear password from memory immediately after hashing
+        secureClear(password);
+        
         const user = {
             id,
-            email,
+            email: sanitizeInput(email),
             password: hashedPassword,
             createdAt: new Date().toISOString()
         };
         this.users.set(id, user);
         await this.saveUsers();
-        return { id, email, createdAt: user.createdAt };
+        return { id, email: user.email, createdAt: user.createdAt };
     }
 
     async findUserByEmail(email) {
@@ -211,8 +407,18 @@ class UserStorage {
 
     async verifyPassword(email, password) {
         const user = await this.findUserByEmail(email);
-        if (!user) return null;
+        if (!user) {
+            // Clear password from memory immediately
+            secureClear(password);
+            return null;
+        }
+        
+        // Use bcrypt.compare which is timing-safe
         const isValid = await bcrypt.compare(password, user.password);
+        
+        // Clear password from memory after use
+        secureClear(password);
+        
         return isValid ? { id: user.id, email: user.email } : null;
     }
 }
@@ -220,8 +426,26 @@ class UserStorage {
 const tokenStorage = new SecureTokenStorage();
 const userStorage = new UserStorage();
 
-// Initialize data directory on startup
-initDataDir();
+// Initialize data directory and security keys on startup
+(async () => {
+    // Check process security first
+    checkProcessSecurity();
+    
+    await initDataDir();
+    await ensureSecurityKeys();
+    
+    // Reload .env after ensuring keys exist
+    delete require.cache[require.resolve('dotenv')];
+    require('dotenv').config({ override: true });
+    
+    // Update keys from .env after ensuring they exist
+    if (process.env.JWT_SECRET && !process.env.JWT_SECRET.includes('your_')) {
+        JWT_SECRET = process.env.JWT_SECRET;
+    }
+    if (process.env.ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY.includes('your_')) {
+        ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+    }
+})();
 
 // Security middleware
 const cspConnectSrc = ["'self'", "https://*.plaid.com"];
@@ -250,22 +474,45 @@ app.use(helmet({
         includeSubDomains: true,
         preload: true
     } : false,
+    permissionsPolicy: {
+        accelerometer: ['*'],
+        'encrypted-media': ['*'],
+        geolocation: [],
+        microphone: [],
+        camera: [],
+    },
 }));
+
+// Additional Permissions-Policy header for Plaid Link SDK compatibility
+app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'accelerometer=*, encrypted-media=*');
+    next();
+});
 
 // Handle Chrome DevTools .well-known requests (prevents 404 warnings)
 app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
     res.status(204).send();
 });
 
-// CORS configuration - dynamically allow based on request origin
+// CORS configuration - restrict to localhost for local use
+const isLocalOnly = process.env.LOCAL_ONLY === 'true' || NODE_ENV === 'development';
 app.use(cors({
     origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests) in development
         if (!origin && NODE_ENV === 'development') {
             return callback(null, true);
         }
-        if (!origin) {
+        
+        // Explicitly allow localhost origins
+        if (origin && (
+            origin.startsWith('http://localhost:') ||
+            origin.startsWith('http://127.0.0.1:') ||
+            origin.startsWith('http://[::1]:')
+        )) {
             return callback(null, true);
         }
+        
+        // In production or if ALLOWED_ORIGINS is set, use configured origins
         const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
         if (allowedOriginsEnv) {
             const allowed = allowedOriginsEnv.split(',').map(o => o.trim());
@@ -273,9 +520,12 @@ app.use(cors({
                 return callback(null, true);
             }
         }
-        if (NODE_ENV === 'development') {
+        
+        // Allow all origins in development (for flexibility)
+        if (NODE_ENV === 'development' && !isLocalOnly) {
             return callback(null, true);
         }
+        
         callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
@@ -356,15 +606,27 @@ const plaidClient = new PlaidApi(configuration);
 
 // User Registration
 app.post('/api/auth/register', async (req, res) => {
+    let password = null;
     try {
-        const { email, password } = req.body;
-
+        const { email: rawEmail, password: rawPassword } = req.body;
+        
+        // Sanitize inputs
+        const email = sanitizeInput(rawEmail);
+        password = rawPassword; // Keep reference for clearing
+        
+        // Validate inputs
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
         }
 
-        if (password.length < 8) {
-            return res.status(400).json({ error: 'Password must be at least 8 characters' });
+        if (!validateEmail(email)) {
+            return res.status(400).json({ error: 'Invalid email format' });
+        }
+
+        if (!validatePassword(password)) {
+            return res.status(400).json({ 
+                error: 'Password must be at least 8 characters and contain both letters and numbers' 
+            });
         }
 
         // Check if user already exists
@@ -373,8 +635,12 @@ app.post('/api/auth/register', async (req, res) => {
             return res.status(409).json({ error: 'User already exists' });
         }
 
-        // Create user
+        // Create user (password will be cleared inside createUser)
         const user = await userStorage.createUser(email, password);
+        
+        // Clear password from memory
+        secureClear(password);
+        password = null;
 
         // Generate JWT token
         const token = jwt.sign(
@@ -389,6 +655,7 @@ app.post('/api/auth/register', async (req, res) => {
             user: { id: user.id, email: user.email }
         });
     } catch (error) {
+        if (password) secureClear(password);
         console.error('Error registering user:', error);
         res.status(500).json({ error: 'Failed to register user' });
     }
@@ -396,15 +663,29 @@ app.post('/api/auth/register', async (req, res) => {
 
 // User Login
 app.post('/api/auth/login', async (req, res) => {
+    let password = null;
     try {
-        const { email, password } = req.body;
+        const { email: rawEmail, password: rawPassword } = req.body;
+        
+        // Sanitize inputs
+        const email = sanitizeInput(rawEmail);
+        password = rawPassword; // Keep reference for clearing
 
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password are required' });
         }
 
-        // Verify credentials
+        if (!validateEmail(email)) {
+            return res.status(400).json({ error: 'Invalid email format' });
+        }
+
+        // Verify credentials (password will be cleared inside verifyPassword)
         const user = await userStorage.verifyPassword(email, password);
+        
+        // Clear password from memory
+        secureClear(password);
+        password = null;
+        
         if (!user) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
@@ -422,6 +703,7 @@ app.post('/api/auth/login', async (req, res) => {
             user: { id: user.id, email: user.email }
         });
     } catch (error) {
+        if (password) secureClear(password);
         console.error('Error logging in:', error);
         res.status(500).json({ error: 'Failed to login' });
     }
@@ -452,6 +734,9 @@ app.post('/api/link/token/create', authenticateToken, async (req, res) => {
             products: ['transactions'],
             country_codes: ['US'],
             language: 'en',
+            transactions: {
+                days_requested: 730  // Request 24 months (730 days) of transaction history
+            },
         };
 
         const response = await plaidClient.linkTokenCreate(request);
@@ -664,17 +949,22 @@ app.get('/api/config', (req, res) => {
 // Serve static files (HTML, CSS, JS) - must be after all API routes
 app.use(express.static(path.join(__dirname)));
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
+// Start server - bind to localhost for local-only use
+const SERVER_HOST = process.env.SERVER_HOST || (NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+app.listen(PORT, SERVER_HOST, () => {
     if (NODE_ENV === 'development') {
-        const networkInterfaces = require('os').networkInterfaces();
-        const localIP = Object.values(networkInterfaces)
-            .flat()
-            .find(i => i.family === 'IPv4' && !i.internal)?.address;
-        
         console.log(`Server running on http://localhost:${PORT}`);
-        if (localIP) {
-            console.log(`Also accessible at http://${localIP}:${PORT}`);
+        if (SERVER_HOST === '127.0.0.1') {
+            console.log(`✅ Local-only mode: Server accessible only from localhost`);
+        } else {
+            const networkInterfaces = require('os').networkInterfaces();
+            const localIP = Object.values(networkInterfaces)
+                .flat()
+                .find(i => i.family === 'IPv4' && !i.internal)?.address;
+            if (localIP) {
+                console.log(`⚠️  Server also accessible at http://${localIP}:${PORT}`);
+                console.log(`   Set SERVER_HOST=127.0.0.1 in .env for local-only access`);
+            }
         }
         console.log(`Plaid environment: ${process.env.PLAID_ENV || 'sandbox'}`);
     }

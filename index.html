@@ -184,13 +184,15 @@
 
     <!-- Footer -->
     <footer class="footer">
-        <button class="btn-secondary" id="sync-btn">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button class="btn-secondary" id="sync-btn" style="position: relative;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0;">
                 <polyline points="23 4 23 10 17 10"></polyline>
                 <polyline points="1 20 1 14 7 14"></polyline>
                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
             </svg>
-            Sync Transactions
+            <span id="sync-btn-text">Sync Transactions</span>
+            <span id="sync-status-indicator"></span>
+            <div id="sync-last-time"></div>
         </button>
         <button class="btn-secondary" id="export-btn">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -377,6 +377,7 @@ async function handlePlaidSuccess(publicToken, metadata) {
                 };
 
                 accounts.push(newAccount);
+                dirtyAccounts.add(newAccount.id); // Mark as changed
                 
                 // Store item_id mapping (NO access token)
                 plaidItemIds.set(newAccount.id, {
@@ -514,6 +515,7 @@ async function syncAllTransactions(accountIdsToSync = null) {
                             };
                             
                             transactions.push(newTransaction);
+                            dirtyTransactions.add(newTransaction.id); // Mark as changed
                             syncedCount++;
                         }
                     }
@@ -531,6 +533,7 @@ async function syncAllTransactions(accountIdsToSync = null) {
                             existingTransaction.category = plaidTransaction.category ? plaidTransaction.category[0] : '';
                             existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
                             existingTransaction.updated = true;
+                            dirtyTransactions.add(existingTransaction.id); // Mark as changed
                             modifiedCount++;
                         }
                     }
@@ -543,6 +546,7 @@ async function syncAllTransactions(accountIdsToSync = null) {
                         
                         if (existingTransaction) {
                             existingTransaction.status = 'removed';
+                            dirtyTransactions.add(existingTransaction.id); // Mark as changed
                             removedCount++;
                         }
                     }
@@ -559,6 +563,7 @@ async function syncAllTransactions(accountIdsToSync = null) {
                 
                 // Update cursor in account data (always update, even if no new transactions)
                 account.plaidCursor = currentCursor;
+                dirtyAccounts.add(accountId); // Mark account as changed (cursor updated)
                 
                 // Update cursor in plaidItemIds map
                 plaidItemIds.set(accountId, {
@@ -588,6 +593,7 @@ async function syncAllTransactions(accountIdsToSync = null) {
                             account.balance = plaidAccount.balances.current || account.balance;
                             // Update initialBalance to track the latest balance from Plaid
                             account.initialBalance = plaidAccount.balances.current || account.initialBalance;
+                            dirtyAccounts.add(accountId); // Mark account as changed (balance updated)
                         }
                     }
                 } catch (balanceError) {
@@ -602,6 +608,12 @@ async function syncAllTransactions(accountIdsToSync = null) {
         // Always save data (even if no new transactions, cursor might have changed)
         // CRITICAL: Ensure cursor is persisted for next sync
         await saveData();
+        
+        // Record sync time for each synced account
+        const syncTimestamp = Date.now();
+        accountsToSync.forEach(accountId => {
+            saveAccountSyncTime(accountId, syncTimestamp);
+        });
         
         if (syncedCount > 0 || modifiedCount > 0 || removedCount > 0) {
             invalidateCache();
@@ -634,6 +646,9 @@ async function syncAllTransactions(accountIdsToSync = null) {
             initializeDashboard();
             showToast('No new transactions to sync', 'info');
         }
+        
+        // Update sync button status after sync
+        updateSyncButtonStatus();
         
     } catch (error) {
         console.error('Error syncing transactions:', error);
@@ -810,6 +825,12 @@ let accountsMap = new Map(); // O(1) account lookups
 let categorySpendingCache = null; // Cache category spending calculations
 let cacheInvalidated = true; // Track if cache needs refresh
 
+// Change tracking for incremental saves (only save what changed)
+let dirtyTransactions = new Set(); // Track which transactions changed
+let dirtyAccounts = new Set(); // Track which accounts changed
+let dirtyCategories = new Set(); // Track which categories changed
+let forceFullSave = false; // Flag to force full save when needed
+
 // Throttle/debounce helpers
 function debounce(func, wait) {
     let timeout;
@@ -861,6 +882,11 @@ let dateFilter = { type: 'current-month', startDate: null, endDate: null };
 async function clearAllData() {
     try {
         if (!db) await initDB();
+        
+        // Clear dirty sets
+        dirtyTransactions.clear();
+        dirtyAccounts.clear();
+        dirtyCategories.clear();
         
         // Delete all data from IndexedDB
         const transaction = db.transaction(
@@ -1065,6 +1091,7 @@ async function deleteCategory(id) {
         transactions.forEach(t => {
             if (t.category === category.name) {
                 t.category = '';
+                dirtyTransactions.add(t.id); // Mark as changed
             }
         });
         // Save updated transactions
@@ -1251,22 +1278,86 @@ const throttledSaveData = throttle(async () => {
     await saveData();
 }, 1000); // Save max once per second
 
-// Regular saveData (for immediate saves when needed) - IndexedDB
-async function saveData() {
+// Regular saveData (optimized - only saves changed items)
+async function saveData(forceAll = false) {
     try {
         if (!db) await initDB();
         
-        // Save transactions
-        const transactionPromises = transactions.map(t => saveToStore(STORES.TRANSACTIONS, t));
-        await Promise.all(transactionPromises);
+        // Use single transaction for all saves (more efficient)
+        const transaction = db.transaction(
+            [STORES.TRANSACTIONS, STORES.ACCOUNTS, STORES.CATEGORIES],
+            'readwrite'
+        );
         
-        // Save accounts
-        const accountPromises = accounts.map(a => saveToStore(STORES.ACCOUNTS, a));
-        await Promise.all(accountPromises);
+        const transactionStore = transaction.objectStore(STORES.TRANSACTIONS);
+        const accountStore = transaction.objectStore(STORES.ACCOUNTS);
+        const categoryStore = transaction.objectStore(STORES.CATEGORIES);
         
-        // Save categories
-        const categoryPromises = categories.map(c => saveToStore(STORES.CATEGORIES, c));
-        await Promise.all(categoryPromises);
+        const savePromises = [];
+        
+        // Save only changed transactions (or all if forced)
+        if (forceAll || forceFullSave || dirtyTransactions.size > 0) {
+            const transactionsToSave = forceAll || forceFullSave 
+                ? transactions 
+                : transactions.filter(t => dirtyTransactions.has(t.id));
+            
+            transactionsToSave.forEach(t => {
+                savePromises.push(
+                    new Promise((resolve, reject) => {
+                        const request = transactionStore.put(t);
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    })
+                );
+            });
+            
+            dirtyTransactions.clear();
+        }
+        
+        // Save only changed accounts (or all if forced)
+        if (forceAll || forceFullSave || dirtyAccounts.size > 0) {
+            const accountsToSave = forceAll || forceFullSave
+                ? accounts
+                : accounts.filter(a => dirtyAccounts.has(a.id));
+            
+            accountsToSave.forEach(a => {
+                savePromises.push(
+                    new Promise((resolve, reject) => {
+                        const request = accountStore.put(a);
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    })
+                );
+            });
+            
+            dirtyAccounts.clear();
+        }
+        
+        // Save only changed categories (or all if forced)
+        if (forceAll || forceFullSave || dirtyCategories.size > 0) {
+            const categoriesToSave = forceAll || forceFullSave
+                ? categories
+                : categories.filter(c => dirtyCategories.has(c.id));
+            
+            categoriesToSave.forEach(c => {
+                savePromises.push(
+                    new Promise((resolve, reject) => {
+                        const request = categoryStore.put(c);
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    })
+                );
+            });
+            
+            dirtyCategories.clear();
+        }
+        
+        // Wait for all saves to complete
+        await Promise.all(savePromises);
+        
+        // Clear force flag after save
+        forceFullSave = false;
+        
     } catch (error) {
         showToast('Error saving data: ' + error.message, 'error');
         console.error('Save error:', error);
@@ -1277,6 +1368,11 @@ async function saveData() {
 async function loadData() {
     try {
         if (!db) await initDB();
+        
+        // Clear dirty sets when loading (fresh start)
+        dirtyTransactions.clear();
+        dirtyAccounts.clear();
+        dirtyCategories.clear();
         
         // Migrate from localStorage if needed
         await migrateFromLocalStorage();
@@ -1615,14 +1711,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Calculate account balances from transactions (this will update balances based on initialBalance + transactions)
     calculateAccountBalances();
     
-    // Auto-sync transactions on load if Plaid accounts exist
-    // This ensures users always have the latest transactions when they open the app
-    if (plaidItemIds.size > 0) {
-        // Small delay to let UI render first
-        setTimeout(async () => {
-            await syncAllTransactions();
-        }, 1000);
-    }
+    // Update sync button status on load (no auto-sync to save costs)
+    updateSyncButtonStatus();
+    
+    // Update sync status every minute
+    setInterval(updateSyncButtonStatus, 60000);
 });
 
 // Theme Management
@@ -1926,11 +2019,12 @@ function reorderAccountsById(draggedAccountId, targetAccountId) {
         acc.order = index;
     });
 
-    // Update accounts array with new orders
+    // Update accounts array with new orders and mark as dirty
     accounts.forEach(acc => {
         const sortedAcc = sortedAccounts.find(sa => sa.id === acc.id);
-        if (sortedAcc) {
+        if (sortedAcc && acc.order !== sortedAcc.order) {
             acc.order = sortedAcc.order;
+            dirtyAccounts.add(acc.id); // Mark as changed
         }
     });
 
@@ -2258,6 +2352,96 @@ function updateBalanceDisplay() {
     accountsSumDisplay.textContent = formatCurrency(total);
 }
 
+// Sync Time Tracking (for cost optimization)
+function saveAccountSyncTime(accountId, timestamp) {
+    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
+    syncTimes[accountId] = timestamp;
+    localStorage.setItem('accountSyncTimes', JSON.stringify(syncTimes));
+}
+
+function getAccountSyncTime(accountId) {
+    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
+    return syncTimes[accountId] || null;
+}
+
+function getLastSyncTime() {
+    // Get the most recent sync time across all accounts
+    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
+    const timestamps = Object.values(syncTimes);
+    return timestamps.length > 0 ? Math.max(...timestamps) : null;
+}
+
+function formatTimeAgo(timestamp) {
+    if (!timestamp) return 'Never';
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
+    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+    return `${days} day${days !== 1 ? 's' : ''} ago`;
+}
+
+function getSyncStatusColor(timestamp) {
+    if (!timestamp) return 'var(--text-secondary)'; // Gray - never synced
+    const now = Date.now();
+    const diff = now - timestamp;
+    const hours = diff / 3600000;
+    
+    if (hours < 1) return 'var(--success-color)'; // Green - fresh
+    if (hours < 6) return 'var(--warning-color)'; // Yellow - getting old
+    return 'var(--danger-color)'; // Red - needs sync
+}
+
+function canSync() {
+    const lastSync = getLastSyncTime();
+    if (!lastSync) return true; // Never synced, allow sync
+    const now = Date.now();
+    const diff = now - lastSync;
+    const minutes = diff / 60000;
+    return minutes >= 5; // 5 minute cooldown
+}
+
+// Update Sync Button Status
+function updateSyncButtonStatus() {
+    const syncBtn = document.getElementById('sync-btn');
+    const syncBtnText = document.getElementById('sync-btn-text');
+    const syncLastTime = document.getElementById('sync-last-time');
+    const syncIndicator = document.getElementById('sync-status-indicator');
+    
+    if (!syncBtn || !syncBtnText || !syncLastTime || !syncIndicator) return;
+    
+    const lastSync = getLastSyncTime();
+    const canSyncNow = canSync();
+    const statusColor = getSyncStatusColor(lastSync);
+    
+    // Update indicator color
+    syncIndicator.style.background = statusColor;
+    
+    // Update last sync time text
+    if (lastSync) {
+        syncLastTime.textContent = `Last synced: ${formatTimeAgo(lastSync)}`;
+    } else {
+        syncLastTime.textContent = 'Never synced';
+    }
+    
+    // Disable button if synced recently
+    if (!canSyncNow && lastSync) {
+        syncBtn.disabled = true;
+        syncBtn.style.opacity = '0.6';
+        syncBtn.style.cursor = 'not-allowed';
+        syncBtnText.textContent = `Synced ${formatTimeAgo(lastSync)}`;
+    } else {
+        syncBtn.disabled = false;
+        syncBtn.style.opacity = '1';
+        syncBtn.style.cursor = 'pointer';
+        syncBtnText.textContent = 'Sync Transactions';
+    }
+}
+
 // Populate Sync Accounts Modal
 function populateSyncAccountsModal() {
     const accountsList = document.getElementById('sync-accounts-list');
@@ -2274,7 +2458,7 @@ function populateSyncAccountsModal() {
         return;
     }
     
-    // Create checkboxes for each Plaid account
+    // Create checkboxes for each Plaid account with last sync time
     plaidAccounts.forEach(acc => {
         const accountItem = document.createElement('div');
         accountItem.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; background: var(--bg-secondary); transition: background 0.2s ease;';
@@ -2286,12 +2470,21 @@ function populateSyncAccountsModal() {
         checkbox.checked = true; // All selected by default
         checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);';
         
+        const lastSyncTime = getAccountSyncTime(acc.id);
+        const syncStatusColor = getSyncStatusColor(lastSyncTime);
+        
         const label = document.createElement('label');
         label.htmlFor = `sync-account-${acc.id}`;
-        label.style.cssText = 'flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
+        label.style.cssText = 'flex: 1; cursor: pointer; display: flex; flex-direction: column; gap: 0.25rem;';
         label.innerHTML = `
-            <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
-            <span style="font-size: 0.875rem; color: var(--text-secondary);">${acc.type}</span>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); text-transform: capitalize;">${acc.type}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: ${syncStatusColor};"></span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary);">Last synced: ${formatTimeAgo(lastSyncTime)}</span>
+            </div>
         `;
         
         accountItem.appendChild(checkbox);
@@ -2893,6 +3086,7 @@ function updateTransactionCategory(transactionId, newCategory) {
         // Set to empty string if "Exempt" was selected
         transaction.category = newCategory || '';
         transaction.updated = true;
+        dirtyTransactions.add(transactionId); // Mark as changed
 
         // Save scroll position before re-rendering - find the scrollable container
         const tbody = document.getElementById('transactions-body');
@@ -3421,6 +3615,7 @@ function setupEventListeners() {
             if (category) {
                 category.name = name;
                 category.allocation = allocation;
+                dirtyCategories.add(editingCategoryId); // Mark as changed
                 showToast('Category updated successfully', 'success');
             }
         } else {
@@ -3431,6 +3626,7 @@ function setupEventListeners() {
                 spent: 0
             };
             categories.push(newCategory);
+            dirtyCategories.add(newCategory.id); // Mark as changed
             showToast('Category added successfully', 'success');
         }
 
@@ -3572,6 +3768,7 @@ function setupEventListeners() {
                 account.subtype = subtype;
                 account.mask = mask;
                 account.initialBalance = balance;
+                dirtyAccounts.add(editingAccountId); // Mark as changed
                 // Recalculate balance from transactions
                 calculateAccountBalances();
                 showToast('Account updated successfully', 'success');
@@ -3588,6 +3785,7 @@ function setupEventListeners() {
                 order: accounts.length // Set order for new account
             };
             accounts.push(newAccount);
+            dirtyAccounts.add(newAccount.id); // Mark as changed
             // Automatically include new account in total balance
             includedAccountIds.add(newAccount.id);
             saveIncludedAccounts();
@@ -3614,6 +3812,14 @@ function setupEventListeners() {
             showToast('No Plaid accounts connected. Please connect an account first.', 'error');
             return;
         }
+        
+        // Check if sync is allowed (5 minute cooldown)
+        if (!canSync()) {
+            const lastSync = getLastSyncTime();
+            showToast(`Please wait. Last synced ${formatTimeAgo(lastSync)}.`, 'info');
+            return;
+        }
+        
         populateSyncAccountsModal();
         document.getElementById('sync-accounts-modal').classList.add('active');
     });
@@ -3999,6 +4205,7 @@ function setupEventListeners() {
                 transaction.accountId = accountId;
                 transaction.accountType = accountType;
                 transaction.updated = true;
+                dirtyTransactions.add(editingTransactionId); // Mark as changed
                 showToast('Transaction updated successfully', 'success');
             }
         } else {
@@ -4015,6 +4222,7 @@ function setupEventListeners() {
                 updated: false
             };
             transactions.push(newTransaction);
+            dirtyTransactions.add(newTransaction.id); // Mark as changed
             showToast('Transaction added successfully', 'success');
         }
 

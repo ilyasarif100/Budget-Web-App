@@ -61,7 +61,8 @@ budgeting-web-app/
 ├── config.js           # Frontend configuration loader
 ├── index.html          # Main HTML file
 ├── script.js           # Frontend application logic
-├── styles.css          # Application styles
+├── css/
+│   └── styles.css      # Application styles
 ├── package.json        # Dependencies
 ├── .env                # Environment variables (not committed)
 ├── env.template        # Environment template
@@ -187,7 +188,7 @@ Uses nodemon for auto-reload on file changes.
 - `server.js` - Backend API and Plaid integration
 - `script.js` - Frontend application logic
 - `config.js` - Configuration management
-- `styles.css` - Application styles
+- `css/styles.css` - Application styles
 
 ---
 

@@ -7,6 +7,8 @@ let accountsMap = new Map(); // O(1) account lookups
 let transactionsMap = new Map(); // O(1) transaction lookups by ID
 let transactionsByAccountMap = new Map(); // O(1) transactions by accountId
 let transactionsByPlaidIdMap = new Map(); // O(1) transactions by plaidTransactionId
+let transactionsByCategoryMap = new Map(); // O(1) transactions by category
+let transactionsByDateMap = new Map(); // O(1) transactions by date (YYYY-MM-DD)
 let categorySpendingCache = null; // Cache category spending calculations
 let cacheInvalidated = true; // Track if cache needs refresh
 
@@ -29,6 +31,8 @@ function buildTransactionsMaps() {
     transactionsMap.clear();
     transactionsByAccountMap.clear();
     transactionsByPlaidIdMap.clear();
+    transactionsByCategoryMap.clear();
+    transactionsByDateMap.clear();
     
     transactions.forEach(t => {
         // Map by ID
@@ -44,6 +48,22 @@ function buildTransactionsMaps() {
         if (t.plaidTransactionId) {
             transactionsByPlaidIdMap.set(t.plaidTransactionId, t);
         }
+        
+        // Map by category (store as array for multiple transactions per category)
+        if (t.category) {
+            if (!transactionsByCategoryMap.has(t.category)) {
+                transactionsByCategoryMap.set(t.category, []);
+            }
+            transactionsByCategoryMap.get(t.category).push(t);
+        }
+        
+        // Map by date (store as array for multiple transactions per date)
+        if (t.date) {
+            if (!transactionsByDateMap.has(t.date)) {
+                transactionsByDateMap.set(t.date, []);
+            }
+            transactionsByDateMap.get(t.date).push(t);
+        }
     });
 }
 
@@ -55,23 +75,50 @@ function invalidateCache() {
     buildTransactionsMaps();
 }
 
-// Get category spending (cached for performance)
-function getCategorySpending() {
-    if (categorySpendingCache && !cacheInvalidated) {
-        return categorySpendingCache;
-    }
-    
-    // Calculate category spending - only count expenses (positive amounts), not income
-    const spending = {};
-    filteredTransactions
-        .filter(t => t.status !== 'removed' && t.category && t.amount > 0) // Only expenses
-        .forEach(t => {
-            spending[t.category] = (spending[t.category] || 0) + t.amount;
+// Get category spending (cached and memoized for performance)
+const getCategorySpendingMemoized = typeof memoize !== 'undefined' 
+    ? memoize(function() {
+        if (categorySpendingCache && !cacheInvalidated) {
+            return categorySpendingCache;
+        }
+        
+        // Calculate category spending - only count expenses (positive amounts), not income
+        // Use Map for O(1) category lookups if available
+        const spending = {};
+        const transactionsToProcess = typeof transactionsByCategoryMap !== 'undefined' && transactionsByCategoryMap
+            ? Array.from(transactionsByCategoryMap.entries()).flatMap(([category, txs]) => 
+                txs.filter(t => t.status !== 'removed' && t.amount > 0).map(t => ({ category, amount: t.amount }))
+              )
+            : filteredTransactions.filter(t => t.status !== 'removed' && t.category && t.amount > 0);
+        
+        transactionsToProcess.forEach(t => {
+            const category = t.category || t.category;
+            spending[category] = (spending[category] || 0) + (t.amount || t.amount);
         });
-    
-    categorySpendingCache = spending;
-    cacheInvalidated = false;
-    return spending;
+        
+        categorySpendingCache = spending;
+        cacheInvalidated = false;
+        return spending;
+    }, { maxAge: 5000 }) // Cache for 5 seconds
+    : function() {
+        if (categorySpendingCache && !cacheInvalidated) {
+            return categorySpendingCache;
+        }
+        
+        const spending = {};
+        filteredTransactions
+            .filter(t => t.status !== 'removed' && t.category && t.amount > 0)
+            .forEach(t => {
+                spending[t.category] = (spending[t.category] || 0) + t.amount;
+            });
+        
+        categorySpendingCache = spending;
+        cacheInvalidated = false;
+        return spending;
+    };
+
+function getCategorySpending() {
+    return getCategorySpendingMemoized();
 }
 
 // Regular saveData (optimized - only saves changed items)

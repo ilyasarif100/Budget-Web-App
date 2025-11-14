@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Permissions-Policy" content="accelerometer=*, encrypted-media=*">
     <title>Budget Tracker</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="css/styles.css">
     <!-- Favicon (data URI SVG to avoid 404) -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
 </head>
@@ -15,7 +15,7 @@
         <div class="dashboard-content">
             <div class="dashboard-item">
                 <span class="dashboard-label">Current Month</span>
-                <span class="dashboard-value" id="current-month">January 2024</span>
+                <span class="dashboard-value" id="current-month">—</span>
             </div>
             <div class="dashboard-item">
                 <span class="dashboard-label">Total Balance</span>
@@ -616,10 +616,13 @@
         </div>
     </div>
 
-    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+    <!-- Plaid SDK will be loaded lazily when needed -->
     <script src="config.js"></script>
     <!-- Core utility modules -->
     <script src="js/utils.js"></script>
+    <script src="js/memoize.js"></script>
+    <script src="js/cache.js"></script>
+    <script src="js/request-dedupe.js"></script>
     <script src="js/db.js"></script>
     <script src="js/data.js"></script>
     <script src="js/auth.js"></script>

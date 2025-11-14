@@ -23,20 +23,48 @@ function setAuthToken(token) {
     }
 }
 
-// Authenticated fetch wrapper - adds Authorization header
+// Authenticated fetch wrapper - adds Authorization header with caching and deduplication
 async function authenticatedFetch(url, options = {}) {
+    // Check cache first (only for GET requests)
+    if ((!options.method || options.method === 'GET') && typeof window !== 'undefined' && window.apiCache) {
+        const cached = window.apiCache.get(url, options);
+        if (cached) {
+            // Return cached response as a Response-like object
+            return new Response(JSON.stringify(cached), {
+                status: 200,
+                statusText: 'OK',
+                headers: { 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
+    // Use deduplicated fetch to prevent duplicate requests
+    const fetchFn = (typeof window !== 'undefined' && window.deduplicatedFetch) 
+        ? window.deduplicatedFetch 
+        : fetch;
+
     // Skip auth if AUTH_REQUIRED is false
     const authRequired = window.CONFIG?.FEATURES?.AUTH_REQUIRED;
     if (authRequired === false || authRequired === 'false' || authRequired === null || authRequired === undefined) {
         // No auth required - make regular fetch
         try {
-            return await fetch(url, {
+            const response = await fetchFn(url, {
                 ...options,
                 headers: {
                     'Content-Type': 'application/json',
                     ...options.headers
                 }
             });
+            
+            // Cache GET responses
+            if ((!options.method || options.method === 'GET') && response.ok && typeof window !== 'undefined' && window.apiCache) {
+                const data = await response.clone().json().catch(() => null);
+                if (data) {
+                    window.apiCache.set(url, options, data);
+                }
+            }
+            
+            return response;
         } catch (error) {
             // Handle network errors (connection refused, etc.)
             if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
@@ -53,7 +81,7 @@ async function authenticatedFetch(url, options = {}) {
     }
     
     try {
-        const response = await fetch(url, {
+        const response = await fetchFn(url, {
             ...options,
             headers: {
                 'Content-Type': 'application/json',
@@ -69,6 +97,14 @@ async function authenticatedFetch(url, options = {}) {
             setAuthToken(null);
             showAuthModal();
             throw new Error('Session expired. Please log in again.');
+        }
+        
+        // Cache GET responses
+        if ((!options.method || options.method === 'GET') && response.ok && typeof window !== 'undefined' && window.apiCache) {
+            const data = await response.clone().json().catch(() => null);
+            if (data) {
+                window.apiCache.set(url, options, data);
+            }
         }
         
         return response;

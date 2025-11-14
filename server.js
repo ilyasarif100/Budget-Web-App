@@ -965,7 +965,19 @@ app.use((err, req, res, next) => {
 });
 
 // Serve static files (HTML, CSS, JS) - must be after all API routes
-app.use(express.static(path.join(__dirname)));
+// In production, serve from dist folder if it exists
+const distPath = path.join(__dirname, 'dist');
+const staticPath = fs.existsSync(distPath) && process.env.NODE_ENV === 'production' 
+    ? distPath 
+    : __dirname;
+app.use(express.static(staticPath));
+
+// Serve service worker from root
+app.get('/sw.js', (req, res) => {
+    const swPath = path.join(__dirname, 'sw.js');
+    res.type('application/javascript');
+    res.sendFile(swPath);
+});
 
 // Global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {

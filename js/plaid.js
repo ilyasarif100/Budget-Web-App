@@ -6,9 +6,65 @@
 let plaidLinkHandler = null;
 let plaidItemIds = new Map(); // Map of account_id -> { item_id, cursor } (NO ACCESS TOKENS)
 
+// Lazy load Plaid SDK
+let plaidSDKLoaded = false;
+async function loadPlaidSDK() {
+    if (plaidSDKLoaded || typeof Plaid !== 'undefined') {
+        plaidSDKLoaded = true;
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+        // Check if script already exists
+        if (document.querySelector('script[src*="plaid.com/link"]')) {
+            // Wait for Plaid to be available
+            const checkPlaid = setInterval(() => {
+                if (typeof Plaid !== 'undefined') {
+                    clearInterval(checkPlaid);
+                    plaidSDKLoaded = true;
+                    resolve();
+                }
+            }, 100);
+            
+            // Timeout after 10 seconds
+            setTimeout(() => {
+                clearInterval(checkPlaid);
+                reject(new Error('Plaid SDK failed to load'));
+            }, 10000);
+            return;
+        }
+
+        // Load Plaid SDK dynamically
+        const script = document.createElement('script');
+        script.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+        script.async = true;
+        script.onload = () => {
+            // Wait for Plaid to be available
+            const checkPlaid = setInterval(() => {
+                if (typeof Plaid !== 'undefined') {
+                    clearInterval(checkPlaid);
+                    plaidSDKLoaded = true;
+                    resolve();
+                }
+            }, 100);
+            
+            // Timeout after 10 seconds
+            setTimeout(() => {
+                clearInterval(checkPlaid);
+                reject(new Error('Plaid SDK failed to initialize'));
+            }, 10000);
+        };
+        script.onerror = () => reject(new Error('Failed to load Plaid SDK'));
+        document.head.appendChild(script);
+    });
+}
+
 // Initialize Plaid Link
 async function initializePlaidLink() {
     try {
+        // Lazy load Plaid SDK first
+        await loadPlaidSDK();
+        
         // Ensure config is loaded
         await waitForConfig();
         

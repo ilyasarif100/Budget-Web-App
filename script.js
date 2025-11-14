@@ -231,14 +231,22 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
     // If no account IDs specified, sync all Plaid accounts
     const accountsToSync = accountIdsToSync || Array.from(plaidItemIds.keys());
     
-    // Sync transactions for each selected account SEQUENTIALLY (one at a time)
-    // This prevents overwhelming the server and makes error handling easier
-    for (const accountId of accountsToSync) {
+    // Parallelize safe API calls with concurrency limit
+    // Sync accounts in batches to prevent overwhelming the server
+    const BATCH_SIZE = 3; // Sync 3 accounts concurrently
+    
+    // Helper function to sync a single account (returns counts)
+    async function syncSingleAccount(accountId) {
+        let accountSynced = 0;
+        let accountModified = 0;
+        let accountRemoved = 0;
         const plaidData = plaidItemIds.get(accountId);
-        if (!plaidData) continue;
+        if (!plaidData) return;
         try {
-            const account = accounts.find(acc => acc.id === accountId);
-            if (!account || !account.plaidItemId) continue;
+            const account = typeof accountsMap !== 'undefined' && accountsMap
+                ? accountsMap.get(accountId)
+                : accounts.find(acc => acc.id === accountId);
+            if (!account || !account.plaidItemId) return;
             
             let currentCursor = plaidData.cursor || null;
             let hasMore = true;
@@ -310,9 +318,22 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                             if (newTransaction.plaidTransactionId) {
                                 transactionsByPlaidIdMap.set(newTransaction.plaidTransactionId, newTransaction);
                             }
+                            // Update category and date maps
+                            if (newTransaction.category && typeof transactionsByCategoryMap !== 'undefined') {
+                                if (!transactionsByCategoryMap.has(newTransaction.category)) {
+                                    transactionsByCategoryMap.set(newTransaction.category, []);
+                                }
+                                transactionsByCategoryMap.get(newTransaction.category).push(newTransaction);
+                            }
+                            if (newTransaction.date && typeof transactionsByDateMap !== 'undefined') {
+                                if (!transactionsByDateMap.has(newTransaction.date)) {
+                                    transactionsByDateMap.set(newTransaction.date, []);
+                                }
+                                transactionsByDateMap.get(newTransaction.date).push(newTransaction);
+                            }
                         }
                         dirtyTransactions.add(newTransaction.id); // Mark as changed
-                        syncedCount++;
+                        accountSynced++;
                     }
                 }
                 
@@ -330,7 +351,7 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                         existingTransaction.status = plaidTransaction.pending ? 'pending' : 'posted';
                         existingTransaction.updated = true;
                         dirtyTransactions.add(existingTransaction.id); // Mark as changed
-                        modifiedCount++;
+                        accountModified++;
                     }
                 }
                 
@@ -343,7 +364,7 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                     if (existingTransaction) {
                         existingTransaction.status = 'removed';
                         dirtyTransactions.add(existingTransaction.id); // Mark as changed
-                        removedCount++;
+                        accountRemoved++;
                     }
                 }
                 
@@ -417,7 +438,31 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                     console.error(`Error syncing account ${accountId}:`, error);
                 }
             }
+            
+            return { synced: accountSynced, modified: accountModified, removed: accountRemoved };
         }
+        
+        return { synced: accountSynced, modified: accountModified, removed: accountRemoved };
+    }
+    
+    // Process accounts in batches
+    for (let i = 0; i < accountsToSync.length; i += BATCH_SIZE) {
+        const batch = accountsToSync.slice(i, i + BATCH_SIZE);
+        
+        // Process batch in parallel
+        const batchResults = await Promise.all(
+            batch.map(accountId => syncSingleAccount(accountId).catch(err => {
+                // Return zero counts on error
+                return { synced: 0, modified: 0, removed: 0 };
+            }))
+        );
+        
+        // Aggregate counts
+        batchResults.forEach(result => {
+            syncedCount += result.synced || 0;
+            modifiedCount += result.modified || 0;
+            removedCount += result.removed || 0;
+        });
     }
     
     // Always save data (even if no new transactions, cursor might have changed)
@@ -1103,7 +1148,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Update sync status every minute
     setInterval(updateSyncButtonStatus, 60000);
-});
+}); // End of DOMContentLoaded listener
 
 // Theme Management
 // Theme and dashboard functions are now in js/ui-helpers.js
@@ -3552,7 +3597,7 @@ function setupEventListeners() {
         renderCategoriesSummary();
         renderCategoriesExpanded();
     });
-}
+} // End of setupEventListeners function
 
 // Edit Account Function
 function editAccount(id) {

@@ -4,6 +4,9 @@
 
 // Performance Optimization: Cached data structures
 let accountsMap = new Map(); // O(1) account lookups
+let transactionsMap = new Map(); // O(1) transaction lookups by ID
+let transactionsByAccountMap = new Map(); // O(1) transactions by accountId
+let transactionsByPlaidIdMap = new Map(); // O(1) transactions by plaidTransactionId
 let categorySpendingCache = null; // Cache category spending calculations
 let cacheInvalidated = true; // Track if cache needs refresh
 
@@ -21,10 +24,35 @@ function buildAccountsMap() {
     });
 }
 
+// Build transaction maps for O(1) lookups
+function buildTransactionsMaps() {
+    transactionsMap.clear();
+    transactionsByAccountMap.clear();
+    transactionsByPlaidIdMap.clear();
+    
+    transactions.forEach(t => {
+        // Map by ID
+        transactionsMap.set(t.id, t);
+        
+        // Map by accountId (store as array for multiple transactions per account)
+        if (!transactionsByAccountMap.has(t.accountId)) {
+            transactionsByAccountMap.set(t.accountId, []);
+        }
+        transactionsByAccountMap.get(t.accountId).push(t);
+        
+        // Map by Plaid transaction ID (if exists)
+        if (t.plaidTransactionId) {
+            transactionsByPlaidIdMap.set(t.plaidTransactionId, t);
+        }
+    });
+}
+
 // Invalidate cache when data changes
 function invalidateCache() {
     cacheInvalidated = true;
     categorySpendingCache = null;
+    // Rebuild transaction maps when data changes
+    buildTransactionsMaps();
 }
 
 // Get category spending (cached for performance)
@@ -64,29 +92,36 @@ async function saveData(forceAll = false) {
         const savePromises = [];
         
         // Save only changed transactions (or all if forced)
+        // Batch operations for better performance
         if (forceAll || forceFullSave || dirtyTransactions.size > 0) {
             const transactionsToSave = forceAll || forceFullSave 
                 ? transactions 
-                : transactions.filter(t => dirtyTransactions.has(t.id));
+                : Array.from(dirtyTransactions).map(id => transactionsMap.get(id)).filter(Boolean);
             
-            transactionsToSave.forEach(t => {
-                savePromises.push(
-                    new Promise((resolve, reject) => {
-                        const request = transactionStore.put(t);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    })
-                );
-            });
+            // Batch save in chunks of 100 for better performance
+            const BATCH_SIZE = 100;
+            for (let i = 0; i < transactionsToSave.length; i += BATCH_SIZE) {
+                const batch = transactionsToSave.slice(i, i + BATCH_SIZE);
+                batch.forEach(t => {
+                    savePromises.push(
+                        new Promise((resolve, reject) => {
+                            const request = transactionStore.put(t);
+                            request.onsuccess = () => resolve();
+                            request.onerror = () => reject(request.error);
+                        })
+                    );
+                });
+            }
             
             dirtyTransactions.clear();
         }
         
         // Save only changed accounts (or all if forced)
+        // Batch operations using Map for O(1) lookups
         if (forceAll || forceFullSave || dirtyAccounts.size > 0) {
             const accountsToSave = forceAll || forceFullSave
                 ? accounts
-                : accounts.filter(a => dirtyAccounts.has(a.id));
+                : Array.from(dirtyAccounts).map(id => accountsMap.get(id)).filter(Boolean);
             
             accountsToSave.forEach(a => {
                 savePromises.push(
@@ -167,6 +202,8 @@ async function loadData() {
                     }
                 }
             });
+            // Build transaction maps after loading
+            buildTransactionsMaps();
         }
         
         // Load accounts
@@ -185,6 +222,8 @@ async function loadData() {
             });
             // Build accounts map after loading
             buildAccountsMap();
+            // Rebuild transaction maps (account references may have changed)
+            buildTransactionsMaps();
         }
         
         // Load categories

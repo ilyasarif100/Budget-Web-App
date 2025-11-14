@@ -274,10 +274,10 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                 
                 // Process added transactions
                 for (const plaidTransaction of syncData.transactions) {
-                    // Check if transaction already exists
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === plaidTransaction.transaction_id
-                    );
+                    // Check if transaction already exists (O(1) lookup using Map)
+                    const existingTransaction = typeof transactionsByPlaidIdMap !== 'undefined' && transactionsByPlaidIdMap
+                        ? transactionsByPlaidIdMap.get(plaidTransaction.transaction_id)
+                        : transactions.find(t => t.plaidTransactionId === plaidTransaction.transaction_id);
                     
                     // Match by account_id OR by our accountId if plaidAccountId matches
                     const accountMatches = plaidTransaction.account_id === account.plaidAccountId;
@@ -300,16 +300,27 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                         };
                         
                         transactions.push(newTransaction);
+                        // Update transaction maps immediately for O(1) lookups
+                        if (typeof transactionsMap !== 'undefined') {
+                            transactionsMap.set(newTransaction.id, newTransaction);
+                            if (!transactionsByAccountMap.has(newTransaction.accountId)) {
+                                transactionsByAccountMap.set(newTransaction.accountId, []);
+                            }
+                            transactionsByAccountMap.get(newTransaction.accountId).push(newTransaction);
+                            if (newTransaction.plaidTransactionId) {
+                                transactionsByPlaidIdMap.set(newTransaction.plaidTransactionId, newTransaction);
+                            }
+                        }
                         dirtyTransactions.add(newTransaction.id); // Mark as changed
                         syncedCount++;
                     }
                 }
                 
-                // Process modified transactions
+                // Process modified transactions (O(1) lookup using Map)
                 for (const plaidTransaction of syncData.modified) {
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === plaidTransaction.transaction_id
-                    );
+                    const existingTransaction = typeof transactionsByPlaidIdMap !== 'undefined' && transactionsByPlaidIdMap
+                        ? transactionsByPlaidIdMap.get(plaidTransaction.transaction_id)
+                        : transactions.find(t => t.plaidTransactionId === plaidTransaction.transaction_id);
                     
                     if (existingTransaction) {
                         existingTransaction.date = plaidTransaction.date;
@@ -323,11 +334,11 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                     }
                 }
                 
-                // Process removed transactions
+                // Process removed transactions (O(1) lookup using Map)
                 for (const removedTransaction of syncData.removed) {
-                    const existingTransaction = transactions.find(
-                        t => t.plaidTransactionId === removedTransaction.transaction_id
-                    );
+                    const existingTransaction = typeof transactionsByPlaidIdMap !== 'undefined' && transactionsByPlaidIdMap
+                        ? transactionsByPlaidIdMap.get(removedTransaction.transaction_id)
+                        : transactions.find(t => t.plaidTransactionId === removedTransaction.transaction_id);
                     
                     if (existingTransaction) {
                         existingTransaction.status = 'removed';
@@ -610,7 +621,10 @@ async function deleteAccount(id) {
     if (!account) return;
     
     // Check if account has transactions
-    const accountTransactions = transactions.filter(t => t.accountId === id && t.status !== 'removed');
+    // O(1) lookup using Map instead of O(n) filter
+    const accountTransactions = typeof transactionsByAccountMap !== 'undefined' && transactionsByAccountMap
+        ? (transactionsByAccountMap.get(id) || []).filter(t => t.status !== 'removed')
+        : transactions.filter(t => t.accountId === id && t.status !== 'removed');
     const hasTransactions = accountTransactions.length > 0;
     
     if (hasTransactions) {
@@ -2100,19 +2114,37 @@ function renderTransactions() {
 
 // Note: Batched rendering removed - now using virtual scrolling for better performance
 
-// Setup virtual scrolling listener
+// Setup virtual scrolling listener with requestAnimationFrame
 function setupVirtualScrolling() {
     const container = document.querySelector('.table-container');
     if (!container) return;
     
-    // Throttled scroll handler for virtual scrolling
-    const handleScroll = throttle(() => {
-        if (virtualScrollState.enabled && filteredTransactions.length > virtualScrollState.threshold) {
-            renderTransactions();
-        }
-    }, 16); // ~60fps
+    let rafId = null;
+    let lastScrollTop = 0;
     
-    container.addEventListener('scroll', handleScroll);
+    // Optimized scroll handler using requestAnimationFrame
+    const handleScroll = () => {
+        // Cancel any pending animation frame
+        if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+        }
+        
+        // Use requestAnimationFrame for smooth 60fps updates
+        rafId = requestAnimationFrame(() => {
+            const scrollTop = container.scrollTop;
+            // Only update if scroll position changed significantly (performance optimization)
+            if (Math.abs(scrollTop - lastScrollTop) > 5 || scrollTop === 0) {
+                lastScrollTop = scrollTop;
+                
+                if (virtualScrollState.enabled && filteredTransactions.length > virtualScrollState.threshold) {
+                    renderTransactions();
+                }
+            }
+            rafId = null;
+        });
+    };
+    
+    container.addEventListener('scroll', handleScroll, { passive: true });
     
     // Also handle resize to recalculate visible rows
     const handleResize = debounce(() => {
@@ -2127,7 +2159,10 @@ function setupVirtualScrolling() {
 
 // Edit Transaction Function
 function editTransaction(id) {
-    const transaction = transactions.find(t => t.id === id);
+    // O(1) lookup using Map instead of O(n) find
+    const transaction = typeof transactionsMap !== 'undefined' && transactionsMap
+        ? transactionsMap.get(id)
+        : transactions.find(t => t.id === id);
     if (!transaction) return;
     
     editingTransactionId = id;
@@ -2191,7 +2226,10 @@ function editTransaction(id) {
 
 // Update Transaction Category
 function updateTransactionCategory(transactionId, newCategory) {
-    const transaction = transactions.find(t => t.id === transactionId);
+    // O(1) lookup using Map instead of O(n) find
+    const transaction = typeof transactionsMap !== 'undefined' && transactionsMap
+        ? transactionsMap.get(transactionId)
+        : transactions.find(t => t.id === transactionId);
     if (transaction) {
         const oldCategory = transaction.category;
         // Set to empty string if "Exempt" was selected
@@ -3462,7 +3500,10 @@ function setupEventListeners() {
 
         if (editingTransactionId) {
             // Edit existing transaction
-            const transaction = transactions.find(t => t.id === editingTransactionId);
+            // O(1) lookup using Map instead of O(n) find
+            const transaction = typeof transactionsMap !== 'undefined' && transactionsMap
+                ? transactionsMap.get(editingTransactionId)
+                : transactions.find(t => t.id === editingTransactionId);
             if (transaction) {
                 transaction.date = date;
                 transaction.merchant = merchant;

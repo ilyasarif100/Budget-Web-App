@@ -5,7 +5,9 @@
 ### Prerequisites
 - Node.js (v14 or higher)
 - npm or yarn
-- Plaid account (get free API keys from [Plaid Dashboard](https://dashboard.plaid.com))
+- Plaid account with API keys ([Plaid Dashboard](https://dashboard.plaid.com))
+  - **Pricing**: Pay as You Go plan (~$0.50-$1.00 per account/month)
+  - **API Calls**: Unlimited (no per-call fees)
 
 ### Step 1: Install Dependencies
 ```bash
@@ -66,9 +68,20 @@ The frontend is automatically served from the same server - no separate frontend
 ### First Launch
 
 1. **Open** `http://localhost:3000`
-2. **Add Account** → Choose "Connect via Plaid"
-3. **Complete** Plaid Link flow
+2. **Add Account** → Choose "Connect via Plaid" or "Manual Entry"
+3. **Complete** Plaid Link flow (if using Plaid)
 4. **Accounts** and transactions will sync automatically!
+5. **Create Categories** → Set up budget categories with monthly allocations
+6. **Sync Transactions** → Click "Sync Transactions" to fetch latest data
+
+### Key Features
+
+- **Multiple Accounts**: Connect multiple bank accounts, credit cards, etc.
+- **Transaction Management**: View, edit, categorize, and delete transactions
+- **Budget Tracking**: Set monthly allocations and track spending by category
+- **Smart Filtering**: Filter by date range, category, status, and account
+- **Daily Syncing**: Sync as often as you want - no additional API call costs!
+- **Export Data**: Export filtered transactions to CSV
 
 ---
 
@@ -124,10 +137,28 @@ npm run dev
 
 ## 📚 Next Steps
 
-1. **Connect Accounts**: Add your bank accounts via Plaid
-2. **Create Categories**: Set up budget categories
-3. **Add Transactions**: Manually add or sync from Plaid
-4. **Review Dashboard**: See your spending breakdown
+1. **Connect Accounts**: Add your bank accounts via Plaid or manual entry
+2. **Create Categories**: Set up budget categories with monthly allocations
+3. **Sync Transactions**: Click "Sync Transactions" to fetch latest data
+4. **Categorize Transactions**: Assign categories to transactions
+5. **Review Dashboard**: See your spending breakdown and category summaries
+6. **Set Filters**: Use date range, category, and account filters
+7. **Export Data**: Export filtered transactions to CSV when needed
+
+## 💰 Cost Information
+
+### Monthly Costs (Local Use)
+
+- **Plaid API**: $3.00-$6.00/month (6 accounts × $0.50-$1.00)
+- **Hosting**: $0.00/month (runs locally)
+- **API Calls**: $0.00/month (unlimited)
+- **Total**: **$3.00-$6.00/month**
+
+### Daily Syncing
+
+- ✅ **Unlimited syncing** - No additional cost per sync
+- ✅ **Sync as often as you want** - Same monthly price
+- ✅ **Only pay for account connections** - Not per API call
 
 ---
 

@@ -1,17 +1,26 @@
 # Budget Tracker - Personal Budgeting Application
 
-A modern, full-stack budgeting application with Plaid integration for automatic transaction syncing.
+A modern, full-stack budgeting application with Plaid integration for automatic transaction syncing. Optimized for local use with unlimited daily syncing.
 
 ## ✨ Features
 
-- 🔗 **Plaid Integration** - Connect bank accounts automatically
-- 💰 **Transaction Management** - View, edit, and categorize transactions
-- 📊 **Budget Categories** - Track spending by category
-- 📈 **Dashboard** - Visual overview of your finances
-- 🔐 **Secure** - Encrypted token storage, authentication, security headers
-- 📱 **Responsive** - Works on desktop and mobile
-- 🌙 **Dark Mode** - Built-in dark theme
-- 📤 **Export** - Export transactions to CSV
+- 🔗 **Plaid Integration** - Connect multiple bank accounts automatically via Plaid Link
+- 💰 **Transaction Management** - View, edit, categorize, and delete transactions
+- 📊 **Budget Categories** - Create and manage custom budget categories with monthly allocations
+- 📈 **Dashboard** - Real-time overview with account balances, spending summaries, and category breakdowns
+- 🔄 **Smart Syncing** - Cursor-based incremental sync (only fetches new transactions)
+- 📱 **Responsive Design** - Works seamlessly on desktop and mobile devices
+- 🌙 **Dark Mode** - Built-in dark theme with light mode toggle
+- 📤 **CSV Export** - Export filtered transactions to CSV
+- 🗄️ **IndexedDB Storage** - Efficient client-side storage for large datasets
+- ⚡ **Virtual Scrolling** - Smooth performance with thousands of transactions
+- 🔐 **Secure** - Encrypted token storage, JWT authentication, security headers
+- 🎯 **Advanced Filtering** - Filter by date range, category, status, and account
+- 📅 **Date Range Options** - Current month, select month, last 7/30/90 days, custom range
+- 💳 **Multiple Account Types** - Supports checking, savings, credit cards, loans, and investments
+- 🔄 **Account Management** - Add, edit, delete, and reorder accounts
+- 📊 **Category Summary** - Track spending vs. budget allocations
+- 🎨 **Modern UI** - Clean, minimal design with smooth animations
 
 ## 🚀 Quick Start
 
@@ -57,23 +66,40 @@ For detailed setup instructions, see [QUICKSTART.md](./QUICKSTART.md)
 
 ```
 budgeting-web-app/
-├── server.js           # Express backend server
-├── config.js           # Frontend configuration loader
-├── index.html          # Main HTML file
-├── script.js           # Frontend application logic
+├── server.js              # Express backend server
+├── config.js              # Frontend configuration loader
+├── index.html             # Main HTML file (development)
+├── index.prod.html        # Production HTML (minified bundle)
+├── script.js              # Main frontend application logic
 ├── css/
-│   └── styles.css      # Application styles
-├── package.json        # Dependencies
-├── .env                # Environment variables (not committed)
-├── env.template        # Environment template
-├── data/               # Encrypted data storage (not committed)
-│   ├── tokens.json     # Encrypted Plaid tokens
-│   └── users.json      # User data
-└── docs/               # Documentation
-    ├── README.md       # This file
-    ├── QUICKSTART.md   # Quick start guide
-    ├── README-ENV.md   # Environment variables guide
-    └── SECURITY.md     # Security documentation
+│   └── styles.css         # Application styles
+├── js/                    # Modular JavaScript files
+│   ├── auth.js            # Authentication & API requests
+│   ├── plaid.js           # Plaid Link integration
+│   ├── data.js            # Data management & IndexedDB
+│   ├── db.js              # IndexedDB operations
+│   ├── ui-helpers.js      # UI helper functions
+│   ├── ui-filters.js      # Filter UI components
+│   ├── ui-render.js       # Rendering functions
+│   ├── ui-update.js       # UI update functions
+│   ├── cache.js           # API response caching
+│   ├── request-dedupe.js  # Request deduplication
+│   ├── memoize.js         # Memoization utilities
+│   ├── error-handler.js   # Error handling
+│   ├── utils.js           # Utility functions
+│   └── validation.js      # Input validation
+├── workers/
+│   └── sync-worker.js     # Web Worker for background syncing
+├── dist/                  # Production build output
+│   ├── app.min.js         # Minified bundle
+│   └── index.html         # Production HTML
+├── package.json           # Dependencies & scripts
+├── webpack.config.js      # Webpack bundling config
+├── .env                   # Environment variables (not committed)
+├── env.template           # Environment template
+└── data/                  # Encrypted data storage (not committed)
+    ├── tokens.json        # Encrypted Plaid tokens
+    └── users.json         # User data
 ```
 
 ---
@@ -145,15 +171,42 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 - **CORS** - Cross-origin resource sharing
 
 ### Frontend
-- **Vanilla JavaScript** - No framework dependencies
-- **IndexedDB** - Client-side data storage
-- **Plaid Link SDK** - Secure account connection
-- **CSS3** - Modern styling with CSS variables
+- **Vanilla JavaScript** - No framework dependencies, modular architecture
+- **IndexedDB** - Client-side data storage with indexes for efficient queries
+- **Virtual Scrolling** - Smooth rendering of large transaction lists
+- **Plaid Link SDK** - Secure account connection (lazy-loaded)
+- **CSS3** - Modern styling with CSS variables for theming
+- **Web Workers** - Background processing for large sync operations
+- **Service Worker** - Offline support and caching
+- **Request Deduplication** - Prevents duplicate API calls
+- **Response Caching** - Reduces redundant network requests
+- **Memoization** - Caches expensive calculations
 
 ### Data Storage
-- **Backend**: Encrypted file-based storage (`data/`)
-- **Frontend**: IndexedDB for transactions and accounts
-- **Secrets**: `.env` file (never committed)
+- **Backend**: Encrypted file-based storage (`data/`) for Plaid tokens and user data
+- **Frontend**: IndexedDB for transactions, accounts, and categories with indexes
+- **Secrets**: `.env` file (never committed, excluded via `.gitignore`)
+- **Optimization**: Incremental saves, batched operations, dirty flags
+
+---
+
+## 💰 Pricing & Costs
+
+### Plaid API Costs (Pay as You Go Plan)
+
+- **Account Connections**: $0.50-$1.00 per account per month
+- **API Calls**: Unlimited (no per-call fees)
+- **Transaction Syncs**: Included with account connection
+- **6 Accounts**: Approximately $3.00-$6.00/month
+- **Daily Syncing**: No additional cost - sync as often as you want!
+
+**Note**: Check your Plaid dashboard for exact per-account pricing.
+
+### Local-Only Use
+
+- **Hosting**: $0.00/month (runs on your computer)
+- **Plaid API**: $3.00-$6.00/month (6 accounts)
+- **Total**: **$3.00-$6.00/month** for local use
 
 ---
 
@@ -169,10 +222,7 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 6. ✅ Set `ALLOWED_ORIGINS` for CORS
 7. ✅ Set secure file permissions
 8. ✅ Enable monitoring/logging
-
-### Docker Deployment
-
-See [Docker documentation](./docs/DOCKER.md) for containerized deployment.
+9. ✅ Run `npm run build` to create production bundle
 
 ---
 
@@ -186,9 +236,19 @@ Uses nodemon for auto-reload on file changes.
 
 ### Code Structure
 - `server.js` - Backend API and Plaid integration
-- `script.js` - Frontend application logic
+- `script.js` - Main frontend orchestrator
+- `js/` - Modular frontend modules (auth, plaid, data, UI, etc.)
 - `config.js` - Configuration management
 - `css/styles.css` - Application styles
+- `workers/` - Web Workers for background processing
+
+### Build Scripts
+- `npm start` - Start production server
+- `npm run dev` - Start development server with auto-reload
+- `npm run build` - Build production bundle (minify, copy assets)
+- `npm run minify` - Minify JavaScript bundle
+- `npm run build-webpack` - Webpack build with tree-shaking
+- `npm run analyze` - Analyze bundle size and dependencies
 
 ---
 

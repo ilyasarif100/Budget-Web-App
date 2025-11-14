@@ -4,13 +4,7 @@ let categories = [];
 let accounts = [];
 let transactions = [];
 
-// Authentication State
-let authToken = null;
-let currentUser = null;
-
-// Plaid Integration State
-let plaidLinkHandler = null;
-let plaidItemIds = new Map(); // Map of account_id -> { item_id, cursor } (NO ACCESS TOKENS)
+// Authentication and Plaid state are in js/auth.js and js/plaid.js
 
 // Plaid account subtypes mapping (global for use in editAccount)
 const accountSubtypes = {
@@ -110,431 +104,87 @@ function updateAccountSubtypesForSelect(type) {
 // ============================================
 // Authentication Functions
 // ============================================
+// Authentication functions are in js/auth.js
+// Plaid functions are in js/plaid.js
+// syncAllTransactions remains here as it has dependencies on data management
 
-// Get auth token from localStorage
-function getAuthToken() {
-    return localStorage.getItem('authToken');
-}
+// Sync lock to prevent multiple simultaneous syncs
+let isSyncing = false;
 
-// Set auth token
-function setAuthToken(token) {
-    authToken = token;
-    if (token) {
-        localStorage.setItem('authToken', token);
-    } else {
-        localStorage.removeItem('authToken');
-    }
-}
-
-// Make authenticated API request
-async function authenticatedFetch(url, options = {}) {
-    // Skip auth if disabled (check both boolean false and string "false")
-    const authRequired = window.CONFIG?.FEATURES?.AUTH_REQUIRED;
-    if (authRequired === false || authRequired === 'false' || authRequired === null || authRequired === undefined) {
-        return fetch(url, {
-            ...options,
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
-            }
-        });
-    }
-
-    const token = getAuthToken();
-    if (!token) {
-        throw new Error('Not authenticated. Please log in.');
-    }
-
-    const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        ...options.headers
-    };
-
-    const response = await fetch(url, {
-        ...options,
-        headers
-    });
-
-    if (response.status === 401) {
-        // Token expired or invalid
-        setAuthToken(null);
-        currentUser = null;
-        showAuthModal();
-        throw new Error('Session expired. Please log in again.');
-    }
-
-    return response;
-}
-
-// User Registration
-async function register(email, password) {
-    const response = await fetch(`${window.CONFIG.API_BASE_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
-
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Registration failed');
-    }
-
-    const data = await response.json();
-    setAuthToken(data.token);
-    currentUser = data.user;
-    return data;
-}
-
-// User Login
-async function login(email, password) {
-    const response = await fetch(`${window.CONFIG.API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-    });
-
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Login failed');
-    }
-
-    const data = await response.json();
-    setAuthToken(data.token);
-    currentUser = data.user;
-    return data;
-}
-
-// Verify token
-async function verifyToken() {
-    // Skip verification if auth is disabled
-    const authRequired = window.CONFIG?.FEATURES?.AUTH_REQUIRED;
-    if (authRequired === false || authRequired === 'false' || authRequired === null || authRequired === undefined) {
-        return true;
-    }
-    
-    const token = getAuthToken();
-    if (!token) return false;
-
+// Check if server is available (global function for use in other modules)
+async function checkServerHealth() {
     try {
-        const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/auth/verify`);
-        if (response.ok) {
-            const data = await response.json();
-            currentUser = data.user;
-            return true;
-        }
+        const response = await fetch(`${window.CONFIG.API_BASE_URL}/health`, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000) // 5 second timeout
+        });
+        return response.ok;
     } catch (error) {
+        // Connection errors mean server is down
         return false;
     }
-    return false;
 }
 
-// Show auth modal
-let isRegisterMode = false;
-
-function showAuthModal() {
-    const authModal = document.getElementById('auth-modal');
-    const authForm = document.getElementById('auth-form');
-    const authEmail = document.getElementById('auth-email');
-    const authPassword = document.getElementById('auth-password');
-    const authError = document.getElementById('auth-error');
-    const authTitle = document.getElementById('auth-modal-title');
-    const authSubmit = document.getElementById('auth-submit');
-    const authSwitchMode = document.getElementById('auth-switch-mode');
-    
-    if (!authModal) return;
-    
-    // Reset form
-    isRegisterMode = false;
-    authForm.reset();
-    authError.style.display = 'none';
-    authTitle.textContent = 'Login';
-    authSubmit.textContent = 'Login';
-    authSwitchMode.textContent = 'Need to register?';
-    
-    // Show modal
-    authModal.classList.add('active');
-    authEmail.focus();
-}
-
-function hideAuthModal() {
-    const authModal = document.getElementById('auth-modal');
-    if (authModal) {
-        authModal.classList.remove('active');
-    }
-}
-
-function toggleAuthMode() {
-    isRegisterMode = !isRegisterMode;
-    const authTitle = document.getElementById('auth-modal-title');
-    const authSubmit = document.getElementById('auth-submit');
-    const authSwitchMode = document.getElementById('auth-switch-mode');
-    const authError = document.getElementById('auth-error');
-    
-    authError.style.display = 'none';
-    
-    if (isRegisterMode) {
-        authTitle.textContent = 'Register';
-        authSubmit.textContent = 'Register';
-        authSwitchMode.textContent = 'Already have an account?';
-    } else {
-        authTitle.textContent = 'Login';
-        authSubmit.textContent = 'Login';
-        authSwitchMode.textContent = 'Need to register?';
-    }
-}
-
-function handleAuthSubmit(e) {
-    e.preventDefault();
-    
-    const authEmail = document.getElementById('auth-email');
-    const authPassword = document.getElementById('auth-password');
-    const authError = document.getElementById('auth-error');
-    const authSubmit = document.getElementById('auth-submit');
-    
-    const email = authEmail.value.trim();
-    const password = authPassword.value;
-    
-    if (!email || !password) {
-        authError.textContent = 'Please enter both email and password';
-        authError.style.display = 'block';
-        return;
-    }
-    
-    // Disable submit button and show loading
-    authSubmit.disabled = true;
-    authSubmit.textContent = isRegisterMode ? 'Registering...' : 'Logging in...';
-    authError.style.display = 'none';
-    
-    const authPromise = isRegisterMode 
-        ? register(email, password)
-        : login(email, password);
-    
-    authPromise.then(() => {
-        showToast(isRegisterMode ? 'Registered successfully!' : 'Logged in successfully!', 'success');
-        hideAuthModal();
-        location.reload();
-    }).catch(err => {
-        authError.textContent = err.message || (isRegisterMode ? 'Registration failed' : 'Login failed');
-        authError.style.display = 'block';
-        authSubmit.disabled = false;
-        authSubmit.textContent = isRegisterMode ? 'Register' : 'Login';
-    });
-}
-
-// ============================================
-// Plaid Integration Functions
-// ============================================
-
-// Initialize Plaid Link
-async function initializePlaidLink() {
-    try {
-        // Ensure config is loaded
-        await waitForConfig();
-        
-        // Validate config is loaded - check both window.CONFIG and CONFIG
-        if ((!window.CONFIG || !window.CONFIG.API_BASE_URL) && (!CONFIG || !CONFIG.API_BASE_URL)) {
-            // Try to use current origin as fallback
-            const fallbackUrl = window.location.origin ? `${window.location.origin}/api` : 'http://localhost:3000/api';
-            console.warn('Config not fully loaded, using fallback URL:', fallbackUrl);
-            window.CONFIG = window.CONFIG || CONFIG || {};
-            window.CONFIG.API_BASE_URL = fallbackUrl;
-        }
-        
-        const apiUrl = window.CONFIG?.API_BASE_URL || CONFIG?.API_BASE_URL;
-        if (!apiUrl) {
-            throw new Error('Configuration not loaded. Please refresh the page.');
-        }
-        
-        // Get link token from backend (authenticated)
-        const response = await authenticatedFetch(`${apiUrl}/link/token/create`, {
-            method: 'POST',
-            body: JSON.stringify({})
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            const errorMessage = error.message || 'Failed to create link token';
-            const errorCode = error.error_code || 'UNKNOWN';
-            
-            // Show user-friendly error message
-            if (errorCode === 'INVALID_API_KEYS') {
-                throw new Error('Invalid Plaid credentials. Please check your .env file - production credentials are required for production mode.');
+// Retry helper with exponential backoff (global function for use in other modules)
+async function retryWithBackoff(fn, maxRetries = 3, baseDelay = 1000) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            // Don't retry on connection errors - server is down, fail immediately
+            if (error.message && (
+                error.message.includes('Cannot connect to server') ||
+                error.message.includes('ERR_CONNECTION_REFUSED') ||
+                error.message.includes('Failed to fetch') ||
+                error.message.includes('network error')
+            )) {
+                throw error; // Fail immediately, don't retry
             }
             
-            throw new Error(errorMessage);
-        }
-
-        const data = await response.json();
-        const linkToken = data.link_token;
-
-        // Initialize Plaid Link
-        if (typeof Plaid !== 'undefined') {
-            const handler = Plaid.create({
-                token: linkToken,
-                onSuccess: handlePlaidSuccess,
-                onExit: handlePlaidExit,
-                onEvent: handlePlaidEvent,
-            });
-
-            plaidLinkHandler = handler;
-            
-            // Hide loading, show Plaid Link
-            document.getElementById('plaid-loading').style.display = 'none';
-            document.getElementById('plaid-error').style.display = 'none';
-            
-            // Open Plaid Link
-            handler.open();
-        } else {
-            throw new Error('Plaid SDK not loaded');
-        }
-    } catch (error) {
-        console.error('Error initializing Plaid Link:', error);
-        throw error;
-    }
-}
-
-// Handle successful Plaid connection
-async function handlePlaidSuccess(publicToken, metadata) {
-    try {
-        showToast('Account connected successfully!', 'success');
-        
-        // Exchange public token for access token (stored securely on backend)
-        const tokenResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/item/public_token/exchange`, {
-            method: 'POST',
-            body: JSON.stringify({
-                public_token: publicToken,
-            }),
-        });
-
-        if (!tokenResponse.ok) {
-            const error = await tokenResponse.json();
-            throw new Error(error.message || 'Failed to exchange token');
-        }
-
-        const tokenData = await tokenResponse.json();
-        const itemId = tokenData.item_id; // Access token stored on backend, we only get item_id
-
-        // Get accounts from Plaid (using item_id, backend will retrieve access token)
-        const accountsResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
-            method: 'POST',
-            body: JSON.stringify({
-                item_id: itemId,
-            }),
-        });
-
-        if (!accountsResponse.ok) {
-            const errorData = await accountsResponse.json().catch(() => ({ error: 'Unknown error' }));
-            console.error('Accounts fetch error:', errorData);
-            throw new Error(errorData.error || errorData.message || 'Failed to get accounts');
-        }
-
-        const accountsData = await accountsResponse.json();
-        
-        // Track newly added account IDs for efficient syncing
-        const newlyAddedAccountIds = [];
-        
-        // Add accounts to our system
-        for (const plaidAccount of accountsData.accounts) {
-            // Check if account already exists
-            const existingAccount = accounts.find(acc => acc.plaidAccountId === plaidAccount.account_id);
-            
-            if (!existingAccount) {
-                // Map Plaid account to our account format (NO ACCESS TOKEN STORED)
-                const newAccount = {
-                    id: `acc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                    name: plaidAccount.name,
-                    type: plaidAccount.type,
-                    subtype: plaidAccount.subtype || 'other',
-                    mask: plaidAccount.mask || '0000',
-                    balance: plaidAccount.balances.current || 0,
-                    initialBalance: plaidAccount.balances.current || 0,
-                    plaidAccountId: plaidAccount.account_id,
-                    plaidItemId: itemId,
-                    order: accounts.length, // Set order for new account
-                    // NO plaidAccessToken - stored securely on backend only
-                };
-
-                accounts.push(newAccount);
-                dirtyAccounts.add(newAccount.id); // Mark as changed
-                newlyAddedAccountIds.push(newAccount.id); // Track for syncing
-                
-                // Store item_id mapping (NO access token)
-                plaidItemIds.set(newAccount.id, {
-                    item_id: itemId,
-                    cursor: null,
-                });
-                
-                // Automatically include new account in total balance
-                includedAccountIds.add(newAccount.id);
+            // Don't retry on 4xx errors (client errors) - these won't be fixed by retrying
+            if (error.response && error.response.status >= 400 && error.response.status < 500) {
+                throw error;
             }
+            
+            // Last attempt - throw the error
+            if (attempt === maxRetries - 1) {
+                throw error;
+            }
+            
+            // Wait before retrying (exponential backoff)
+            const delay = baseDelay * Math.pow(2, attempt);
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
-
-        // Save accounts
-        saveData();
-        saveIncludedAccounts();
-        
-        // Close Plaid modal
-        const plaidModal = document.getElementById('plaid-modal');
-        if (plaidModal) plaidModal.classList.remove('active');
-        
-        // Refresh UI
-        buildAccountsMap();
-        renderAccounts();
-        updateTotalBalance();
-        populateAccountFilters();
-        
-        // OPTIMIZATION: Sync only newly added accounts, not all accounts
-        if (newlyAddedAccountIds.length > 0) {
-            showToast(`Syncing ${newlyAddedAccountIds.length} new account(s)...`, 'info');
-            await syncAllTransactions(newlyAddedAccountIds);
-        }
-        if (window.populateTransactionAccountSelect) {
-            window.populateTransactionAccountSelect();
-        }
-        
-        if (newlyAddedAccountIds.length > 0) {
-            showToast(`${newlyAddedAccountIds.length} account(s) added and synced successfully!`, 'success');
-        } else {
-            showToast(`${accountsData.accounts.length} account(s) added successfully!`, 'success');
-        }
-        
-    } catch (error) {
-        console.error('Error handling Plaid success:', error);
-        showPlaidError(error.message || 'Failed to process account connection');
     }
 }
 
-// Handle Plaid exit
-function handlePlaidExit(err, metadata) {
-    if (err) {
-        console.error('Plaid exit error:', err);
-        showPlaidError(err.error_message || 'Connection cancelled');
-    } else {
-        // User closed without error
-        const plaidModal = document.getElementById('plaid-modal');
-        if (plaidModal) plaidModal.classList.remove('active');
-    }
-}
-
-// Handle Plaid events
-function handlePlaidEvent(eventName, metadata) {
-    // Event handler (no logging)
-}
-
-// Show Plaid error
-function showPlaidError(message) {
-    document.getElementById('plaid-loading').style.display = 'none';
-    document.getElementById('plaid-error').style.display = 'block';
-    document.getElementById('plaid-error-message').textContent = message;
+// Make functions globally accessible for use in other modules
+if (typeof window !== 'undefined') {
+    window.checkServerHealth = checkServerHealth;
+    window.retryWithBackoff = retryWithBackoff;
 }
 
 // Sync transactions from Plaid for selected accounts
 async function syncAllTransactions(accountIdsToSync = null) {
+    // Prevent multiple simultaneous syncs
+    if (isSyncing) {
+        showToast('Sync already in progress. Please wait...', 'info');
+        return;
+    }
+    
     const syncBtn = document.getElementById('sync-btn');
     const syncBtnText = document.getElementById('sync-btn-text');
     
     try {
+        // Check server health before starting
+        const serverHealthy = await checkServerHealth();
+        if (!serverHealthy) {
+            throw new Error('Cannot connect to server. Please make sure the backend server is running on port 3000.');
+        }
+        
+        // Set sync lock
+        isSyncing = true;
+        
         // Set loading state
         setLoading('sync', true, syncBtn);
         if (syncBtnText) {
@@ -542,19 +192,25 @@ async function syncAllTransactions(accountIdsToSync = null) {
         }
         showToast('Syncing transactions...', 'info');
         
-        // Wrap with error handler
+        // Wrap with error handler and retry logic
         const wrappedSync = typeof errorHandler !== 'undefined' 
-            ? errorHandler.wrapAsync(() => syncAllTransactionsInternal(accountIdsToSync), 'syncAllTransactions')
-            : () => syncAllTransactionsInternal(accountIdsToSync);
+            ? errorHandler.wrapAsync(() => retryWithBackoff(() => syncAllTransactionsInternal(accountIdsToSync), 3, 1000), 'syncAllTransactions')
+            : () => retryWithBackoff(() => syncAllTransactionsInternal(accountIdsToSync), 3, 1000);
         
         await wrappedSync();
     } catch (error) {
         // Error already handled by errorHandler if available
         if (typeof errorHandler === 'undefined') {
-            console.error('Error syncing transactions:', error);
+            // Only log if it's not a connection error (those are expected)
+            if (!error.message || !error.message.includes('Cannot connect to server')) {
+                console.error('Error syncing transactions:', error);
+            }
             showToast('Error syncing transactions: ' + (error.message || 'Unknown error'), 'error');
         }
     } finally {
+        // Clear sync lock
+        isSyncing = false;
+        
         // Clear loading state
         setLoading('sync', false, syncBtn);
         
@@ -575,7 +231,8 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
     // If no account IDs specified, sync all Plaid accounts
     const accountsToSync = accountIdsToSync || Array.from(plaidItemIds.keys());
     
-    // Sync transactions for each selected account (using item_id, backend retrieves access token)
+    // Sync transactions for each selected account SEQUENTIALLY (one at a time)
+    // This prevents overwhelming the server and makes error handling easier
     for (const accountId of accountsToSync) {
         const plaidData = plaidItemIds.get(accountId);
         if (!plaidData) continue;
@@ -593,16 +250,23 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                 pageCount++;
                 
                 // Get transactions from Plaid (backend handles access token)
-                const response = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        item_id: account.plaidItemId,
-                        cursor: currentCursor,
-                    }),
-                });
+                // Use retry logic for transient errors
+                const response = await retryWithBackoff(async () => {
+                    return await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/transactions/sync`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            item_id: account.plaidItemId,
+                            cursor: currentCursor,
+                        }),
+                    });
+                }, 3, 1000);
 
                 if (!response.ok) {
-                    console.error(`Failed to sync transactions for account ${accountId}`);
+                    const errorText = await response.text();
+                    // Only log if it's not a connection error
+                    if (!errorText.includes('Cannot connect to server')) {
+                        console.error(`Failed to sync transactions for account ${accountId}: ${response.status} ${errorText}`);
+                    }
                     break;
                 }
 
@@ -699,12 +363,14 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
             // Update account balance from Plaid (for ALL account types)
             // Fetch latest account balances after syncing transactions
             try {
-                const accountsResponse = await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        item_id: account.plaidItemId,
-                    }),
-                });
+                const accountsResponse = await retryWithBackoff(async () => {
+                    return await authenticatedFetch(`${window.CONFIG.API_BASE_URL}/accounts/get`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            item_id: account.plaidItemId,
+                        }),
+                    });
+                }, 2, 500); // Fewer retries for balance update (less critical)
                 
                 if (accountsResponse.ok) {
                     const accountsData = await accountsResponse.json();
@@ -719,13 +385,26 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
                 }
             } catch (balanceError) {
                 // Silently fail balance update - not critical
+                // Don't log connection errors (expected if server is down)
+                if (balanceError.message && !balanceError.message.includes('Cannot connect to server')) {
+                    // Only log unexpected errors
+                }
             }
             
         } catch (error) {
-            if (typeof errorHandler !== 'undefined') {
-                errorHandler.handle(error, `syncAccount-${accountId}`, false);
+            // Don't spam console with connection errors - they're expected if server is down
+            if (error.message && error.message.includes('Cannot connect to server')) {
+                // Only show user-friendly message, don't log to console
+                if (typeof errorHandler !== 'undefined') {
+                    errorHandler.handle(error, `syncAccount-${accountId}`, false);
+                }
             } else {
-                console.error(`Error syncing account ${accountId}:`, error);
+                // Log unexpected errors
+                if (typeof errorHandler !== 'undefined') {
+                    errorHandler.handle(error, `syncAccount-${accountId}`, false);
+                } else {
+                    console.error(`Error syncing account ${accountId}:`, error);
+                }
             }
         }
     }
@@ -776,215 +455,9 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
 // ============================================
 // IndexedDB Database Manager
 // ============================================
-const DB_NAME = 'budgetAppDB';
-const DB_VERSION = 1;
-const STORES = {
-    TRANSACTIONS: 'transactions',
-    ACCOUNTS: 'accounts',
-    CATEGORIES: 'categories'
-};
-
-let db = null;
-
-// Initialize IndexedDB
-function initDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            db = request.result;
-            resolve(db);
-        };
-        
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            
-            // Create object stores if they don't exist
-            if (!db.objectStoreNames.contains(STORES.TRANSACTIONS)) {
-                const transactionStore = db.createObjectStore(STORES.TRANSACTIONS, { keyPath: 'id', autoIncrement: false });
-                transactionStore.createIndex('date', 'date', { unique: false });
-                transactionStore.createIndex('accountId', 'accountId', { unique: false });
-                transactionStore.createIndex('category', 'category', { unique: false });
-            }
-            
-            if (!db.objectStoreNames.contains(STORES.ACCOUNTS)) {
-                db.createObjectStore(STORES.ACCOUNTS, { keyPath: 'id', autoIncrement: false });
-            }
-            
-            if (!db.objectStoreNames.contains(STORES.CATEGORIES)) {
-                db.createObjectStore(STORES.CATEGORIES, { keyPath: 'id', autoIncrement: false });
-            }
-        };
-    });
-}
-
-// Migrate data from localStorage to IndexedDB (one-time migration)
-async function migrateFromLocalStorage() {
-    try {
-        // Check if migration already happened
-        const migrationKey = await getFromStore(STORES.ACCOUNTS, 'migration_complete');
-        if (migrationKey) return; // Already migrated
-        
-        // Check if localStorage has data
-        const savedTransactions = localStorage.getItem('budgetTransactions');
-        const savedAccounts = localStorage.getItem('budgetAccounts');
-        const savedCategories = localStorage.getItem('budgetCategories');
-        
-        if (savedTransactions || savedAccounts || savedCategories) {
-            // Migrate transactions
-            if (savedTransactions) {
-                const transactions = JSON.parse(savedTransactions);
-                await Promise.all(transactions.map(t => saveToStore(STORES.TRANSACTIONS, t)));
-            }
-            
-            // Migrate accounts
-            if (savedAccounts) {
-                const accounts = JSON.parse(savedAccounts);
-                await Promise.all(accounts.map(a => saveToStore(STORES.ACCOUNTS, a)));
-            }
-            
-            // Migrate categories
-            if (savedCategories) {
-                const categories = JSON.parse(savedCategories);
-                await Promise.all(categories.map(c => saveToStore(STORES.CATEGORIES, c)));
-            }
-            
-            // Mark migration as complete
-            await saveToStore(STORES.ACCOUNTS, { id: 'migration_complete', value: true });
-        }
-    } catch (error) {
-        console.error('Migration error:', error);
-    }
-}
-
-// Save to IndexedDB store
-async function saveToStore(storeName, data) {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readwrite');
-        const store = transaction.objectStore(storeName);
-        const request = store.put(data);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Get from IndexedDB store
-async function getFromStore(storeName, key) {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readonly');
-        const store = transaction.objectStore(storeName);
-        const request = store.get(key);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Get all from IndexedDB store
-async function getAllFromStore(storeName) {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readonly');
-        const store = transaction.objectStore(storeName);
-        const request = store.getAll();
-        
-        request.onsuccess = () => {
-            // Filter out migration marker
-            const results = request.result.filter(item => item.id !== 'migration_complete');
-            resolve(results);
-        };
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Delete from IndexedDB store
-async function deleteFromStore(storeName, key) {
-    if (!db) await initDB();
-    
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readwrite');
-        const store = transaction.objectStore(storeName);
-        const request = store.delete(key);
-        
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Get cached category spending (calculated once, reused)
-function getCategorySpending() {
-    if (categorySpendingCache && !cacheInvalidated) {
-        return categorySpendingCache;
-    }
-    
-    // Calculate category spending - only count expenses (positive amounts), not income
-    const spending = {};
-    filteredTransactions
-        .filter(t => t.status !== 'removed' && t.category && t.amount > 0) // Only expenses
-        .forEach(t => {
-            spending[t.category] = (spending[t.category] || 0) + t.amount;
-        });
-    
-    categorySpendingCache = spending;
-    cacheInvalidated = false;
-    return spending;
-}
-
-// Performance Optimization: Cached data structures
-let accountsMap = new Map(); // O(1) account lookups
-let categorySpendingCache = null; // Cache category spending calculations
-let cacheInvalidated = true; // Track if cache needs refresh
-
-// Change tracking for incremental saves (only save what changed)
-let dirtyTransactions = new Set(); // Track which transactions changed
-let dirtyAccounts = new Set(); // Track which accounts changed
-let dirtyCategories = new Set(); // Track which categories changed
-let forceFullSave = false; // Flag to force full save when needed
-
-// Throttle/debounce helpers
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-function throttle(func, limit) {
-    let inThrottle;
-    return function(...args) {
-        if (!inThrottle) {
-            func.apply(this, args);
-            inThrottle = true;
-            setTimeout(() => inThrottle = false, limit);
-        }
-    };
-}
-
-// Build accounts map for O(1) lookups
-function buildAccountsMap() {
-    accountsMap.clear();
-    accounts.forEach(acc => {
-        accountsMap.set(acc.id, acc);
-    });
-}
-
-// Invalidate cache when data changes
-function invalidateCache() {
-    cacheInvalidated = true;
-    categorySpendingCache = null;
-}
+// IndexedDB functions are in js/db.js
+// Data management functions are in js/data.js
+// Utility functions (debounce, throttle, formatCurrency, formatDate) are in js/utils.js
 
 // Transaction data arrays and state variables
 let filteredTransactions = [];
@@ -995,137 +468,7 @@ let editingAccountId = null;
 let deletingTransactionId = null; // Track which transaction is being deleted
 let dateFilter = { type: 'current-month', startDate: null, endDate: null };
 
-// Clear All Data Function
-async function clearAllData() {
-    const clearBtn = document.getElementById('clear-data-btn');
-    
-    try {
-        // Set loading state
-        setLoading('clear', true, clearBtn);
-        if (clearBtn) {
-            clearBtn.textContent = 'Clearing...';
-        }
-        
-        if (!db) await initDB();
-        
-        // Clear dirty sets
-        dirtyTransactions.clear();
-        dirtyAccounts.clear();
-        dirtyCategories.clear();
-        
-        // Delete all data from IndexedDB
-        const transaction = db.transaction(
-            [STORES.TRANSACTIONS, STORES.ACCOUNTS, STORES.CATEGORIES], 
-            'readwrite'
-        );
-        
-        // Clear transactions
-        const transactionStore = transaction.objectStore(STORES.TRANSACTIONS);
-        const transactionRequest = transactionStore.clear();
-        
-        // Clear accounts
-        const accountStore = transaction.objectStore(STORES.ACCOUNTS);
-        const accountRequest = accountStore.clear();
-        
-        // Clear categories
-        const categoryStore = transaction.objectStore(STORES.CATEGORIES);
-        const categoryRequest = categoryStore.clear();
-        
-        await Promise.all([
-            new Promise((resolve, reject) => {
-                transactionRequest.onsuccess = resolve;
-                transactionRequest.onerror = reject;
-            }),
-            new Promise((resolve, reject) => {
-                accountRequest.onsuccess = resolve;
-                accountRequest.onerror = reject;
-            }),
-            new Promise((resolve, reject) => {
-                categoryRequest.onsuccess = resolve;
-                categoryRequest.onerror = reject;
-            }),
-            new Promise((resolve, reject) => {
-                transaction.oncomplete = resolve;
-                transaction.onerror = reject;
-            })
-        ]);
-        
-        // Close and delete IndexedDB database completely
-        db.close();
-        await new Promise((resolve, reject) => {
-            const deleteRequest = indexedDB.deleteDatabase('BudgetTrackerDB');
-            deleteRequest.onsuccess = () => resolve();
-            deleteRequest.onerror = () => reject(deleteRequest.error);
-            deleteRequest.onblocked = () => resolve(); // Continue even if blocked
-        });
-        
-        // Reinitialize IndexedDB
-        await initDB();
-        
-        // Clear arrays in memory
-        transactions = [];
-        accounts = [];
-        categories = [];
-        filteredTransactions = [];
-        
-        // Clear Plaid data
-        plaidItemIds.clear();
-        
-        // Reset editing states
-        editingCategoryId = null;
-        editingTransactionId = null;
-        editingAccountId = null;
-        
-        // Clear all localStorage items (except theme preference - user might want to keep that)
-        const themePreference = localStorage.getItem('theme'); // Save theme
-        localStorage.clear();
-        if (themePreference) {
-            localStorage.setItem('theme', themePreference); // Restore theme
-        }
-        
-        // Reset included accounts
-        includedAccountIds.clear();
-        
-        // Clear cache
-        invalidateCache();
-        buildAccountsMap();
-        
-        // Re-render everything
-        initializeDashboard();
-        renderCategories();
-        renderAccounts();
-        filterTransactions();
-        populateCategoryFilters();
-        populateAccountFilters();
-        
-        if (window.populateTransactionAccountSelect) {
-            window.populateTransactionAccountSelect();
-        }
-        
-        showToast('All data cleared successfully', 'success');
-        
-        // Close modal
-        document.getElementById('clear-data-modal').classList.remove('active');
-        
-    } catch (error) {
-        showToast('Error clearing data: ' + error.message, 'error');
-        console.error('Clear data error:', error);
-    } finally {
-        // Clear loading state
-        setLoading('clear', false, clearBtn);
-        if (clearBtn) {
-            clearBtn.innerHTML = `
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <polyline points="3 6 5 6 21 6"></polyline>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    <line x1="10" y1="11" x2="10" y2="17"></line>
-                    <line x1="14" y1="11" x2="14" y2="17"></line>
-                </svg>
-                Clear All Data
-            `;
-        }
-    }
-}
+// Data management functions (clearAllData, saveData, loadData, etc.) are in js/data.js
 
 // Delete Functions (Updated for IndexedDB)
 async function deleteTransaction(id) {
@@ -1431,242 +774,9 @@ const throttledSaveData = throttle(async () => {
     await saveData();
 }, 1000); // Save max once per second
 
-// Regular saveData (optimized - only saves changed items)
-async function saveData(forceAll = false) {
-    try {
-        if (!db) await initDB();
-        
-        // Use single transaction for all saves (more efficient)
-        const transaction = db.transaction(
-            [STORES.TRANSACTIONS, STORES.ACCOUNTS, STORES.CATEGORIES],
-            'readwrite'
-        );
-        
-        const transactionStore = transaction.objectStore(STORES.TRANSACTIONS);
-        const accountStore = transaction.objectStore(STORES.ACCOUNTS);
-        const categoryStore = transaction.objectStore(STORES.CATEGORIES);
-        
-        const savePromises = [];
-        
-        // Save only changed transactions (or all if forced)
-        if (forceAll || forceFullSave || dirtyTransactions.size > 0) {
-            const transactionsToSave = forceAll || forceFullSave 
-                ? transactions 
-                : transactions.filter(t => dirtyTransactions.has(t.id));
-            
-            transactionsToSave.forEach(t => {
-                savePromises.push(
-                    new Promise((resolve, reject) => {
-                        const request = transactionStore.put(t);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    })
-                );
-            });
-            
-            dirtyTransactions.clear();
-        }
-        
-        // Save only changed accounts (or all if forced)
-        if (forceAll || forceFullSave || dirtyAccounts.size > 0) {
-            const accountsToSave = forceAll || forceFullSave
-                ? accounts
-                : accounts.filter(a => dirtyAccounts.has(a.id));
-            
-            accountsToSave.forEach(a => {
-                savePromises.push(
-                    new Promise((resolve, reject) => {
-                        const request = accountStore.put(a);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    })
-                );
-            });
-            
-            dirtyAccounts.clear();
-        }
-        
-        // Save only changed categories (or all if forced)
-        if (forceAll || forceFullSave || dirtyCategories.size > 0) {
-            const categoriesToSave = forceAll || forceFullSave
-                ? categories
-                : categories.filter(c => dirtyCategories.has(c.id));
-            
-            categoriesToSave.forEach(c => {
-                savePromises.push(
-                    new Promise((resolve, reject) => {
-                        const request = categoryStore.put(c);
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    })
-                );
-            });
-            
-            dirtyCategories.clear();
-        }
-        
-        // Wait for all saves to complete
-        await Promise.all(savePromises);
-        
-        // Clear force flag after save
-        forceFullSave = false;
-        
-    } catch (error) {
-        showToast('Error saving data: ' + error.message, 'error');
-        console.error('Save error:', error);
-    }
-}
+// Data management functions are in js/data.js
 
-// Load all data from IndexedDB
-async function loadData() {
-    try {
-        if (!db) await initDB();
-        
-        // Clear dirty sets when loading (fresh start)
-        dirtyTransactions.clear();
-        dirtyAccounts.clear();
-        dirtyCategories.clear();
-        
-        // Migrate from localStorage if needed
-        await migrateFromLocalStorage();
-        
-        // Load transactions
-        const savedTransactions = await getAllFromStore(STORES.TRANSACTIONS);
-        if (savedTransactions.length > 0) {
-            transactions = savedTransactions;
-            // Remove isNew flags from loaded transactions (only show new for freshly synced ones)
-            transactions.forEach(t => {
-                if (t.isNew) {
-                    delete t.isNew;
-                }
-            });
-            // Ensure accountId is set for all transactions
-            transactions.forEach((t, index) => {
-                if (!t.accountId && t.accountType) {
-                    if (t.accountType === 'debit') {
-                        t.accountId = index % 5 === 0 ? 'acc_4' : 'acc_1';
-                    } else {
-                        t.accountId = index % 2 === 0 ? 'acc_2' : 'acc_3';
-                    }
-                }
-            });
-        }
-        
-        // Load accounts
-        const savedAccounts = await getAllFromStore(STORES.ACCOUNTS);
-        if (savedAccounts.length > 0) {
-            accounts = savedAccounts;
-            // Ensure all accounts have initialBalance and order for backward compatibility
-            accounts.forEach((acc, index) => {
-                if (acc.initialBalance === undefined) {
-                    acc.initialBalance = acc.balance || 0;
-                }
-                // Initialize order if missing
-                if (acc.order === undefined) {
-                    acc.order = index;
-                }
-            });
-            // Build accounts map after loading
-            buildAccountsMap();
-        }
-        
-        // Load categories
-        const savedCategories = await getAllFromStore(STORES.CATEGORIES);
-        if (savedCategories.length > 0) {
-            categories = savedCategories;
-        }
-        
-        // Restore Plaid item IDs from accounts (NO access tokens stored)
-        accounts.forEach(acc => {
-            if (acc.plaidItemId) {
-                plaidItemIds.set(acc.id, {
-                    item_id: acc.plaidItemId,
-                    cursor: acc.plaidCursor || null,
-                });
-            }
-        });
-        
-        // Don't initialize filteredTransactions here - let filterTransactions() handle it
-        // filteredTransactions will be set by filterTransactions() when it's called
-        filteredTransactions = [];
-    } catch (error) {
-        showToast('Error loading data: ' + error.message, 'error');
-        console.error('Load error:', error);
-    }
-}
-
-// Initialize default data (check IndexedDB instead of localStorage)
-async function initializeDefaultData() {
-    try {
-        if (!db) await initDB();
-        
-        // Check if data already exists
-        const existingTransactions = await getAllFromStore(STORES.TRANSACTIONS);
-        const existingAccounts = await getAllFromStore(STORES.ACCOUNTS);
-        const existingCategories = await getAllFromStore(STORES.CATEGORIES);
-        
-        // Only initialize if IndexedDB is empty
-        if (existingTransactions.length === 0 && 
-            existingAccounts.length === 0 && 
-            existingCategories.length === 0) {
-            // Save default data on first load
-            await saveData();
-        }
-    } catch (error) {
-        console.error('Initialize default data error:', error);
-    }
-}
-
-// Toast Notification System
-function showToast(message, type = 'success') {
-    // Remove existing toast if any
-    const existingToast = document.querySelector('.toast');
-    if (existingToast) {
-        existingToast.remove();
-    }
-    
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    
-    // Trigger animation
-    setTimeout(() => toast.classList.add('show'), 10);
-    
-    // Remove after 3 seconds
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
-// Loading State Management
-let loadingStates = new Map(); // Track loading states by key
-
-function setLoading(key, isLoading, element = null) {
-    loadingStates.set(key, isLoading);
-    
-    // If element provided, update it directly
-    if (element) {
-        if (isLoading) {
-            element.disabled = true;
-            element.dataset.originalText = element.textContent || element.innerHTML;
-            if (element.tagName === 'BUTTON') {
-                element.innerHTML = '<span style="display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 0.5rem;"></span>' + (element.dataset.originalText || 'Loading...');
-            }
-        } else {
-            element.disabled = false;
-            if (element.dataset.originalText) {
-                element.textContent = element.dataset.originalText;
-                delete element.dataset.originalText;
-            }
-        }
-    }
-}
-
-function isLoading(key) {
-    return loadingStates.get(key) || false;
-}
+// Toast, loading, theme, and dashboard functions are now in js/ui-helpers.js
 
 // Safe HTML helper - prevents XSS by escaping user input
 function safeSetHTML(element, html) {
@@ -1689,57 +799,7 @@ function escapeHTML(text) {
     return div.innerHTML;
 }
 
-// Calculate Account Balances from Transactions
-// Note: ALL Plaid-connected accounts use balances directly from Plaid, not calculated from transactions
-// Only manually created accounts calculate balances from transactions
-function calculateAccountBalances() {
-    // Create account balance map for single-pass calculation
-    const accountBalances = new Map();
-    
-    // Initialize balances with starting balances
-    accounts.forEach(acc => {
-        // For ALL Plaid-connected accounts, use the balance directly from Plaid (don't recalculate)
-        // For manually created accounts, calculate from initial balance + transactions
-        if (acc.plaidAccountId) {
-            // Use the balance that Plaid provides (stored in balance or initialBalance)
-            const plaidBalance = acc.balance !== undefined ? acc.balance : (acc.initialBalance !== undefined ? acc.initialBalance : 0);
-            accountBalances.set(acc.id, plaidBalance);
-        } else {
-            // For manually created accounts, calculate from initial balance + transactions
-            const startingBalance = acc.initialBalance !== undefined ? acc.initialBalance : acc.balance;
-            accountBalances.set(acc.id, startingBalance);
-        }
-    });
-    
-    // Single pass through transactions (only for manually created accounts, NOT Plaid accounts)
-    transactions.forEach(t => {
-        if (t.status !== 'removed' && t.accountId && accountBalances.has(t.accountId)) {
-            const account = accounts.find(a => a.id === t.accountId);
-            // Only recalculate balances for manually created accounts (not from Plaid)
-            if (account && !account.plaidAccountId) {
-                accountBalances.set(t.accountId, accountBalances.get(t.accountId) + t.amount);
-            }
-        }
-    });
-    
-    // Update account balances
-    accounts.forEach(acc => {
-        // For ALL Plaid-connected accounts, keep the balance from Plaid (don't overwrite it)
-        // The balance will be updated when syncing transactions from Plaid
-        if (acc.plaidAccountId) {
-            // Keep the balance from Plaid (don't overwrite it)
-            // Balance is updated from Plaid during sync
-        } else {
-            // For manually created accounts, use calculated balance
-            acc.balance = accountBalances.get(acc.id) || 0;
-        }
-    });
-    
-    // Throttled save
-    throttledSaveData();
-    renderAccounts();
-    updateTotalBalance(); // Update total balance when accounts change
-}
+// calculateAccountBalances is in js/data.js
 
 // Input Validation Functions
 function validateAccountForm() {
@@ -1963,19 +1023,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize theme (dark mode by default)
     initializeTheme();
     
-    initializeDashboard();
-    renderCategories();
-    setupEventListeners();
-    updateCurrentMonth();
+    // Suppress harmless Plaid SDK warnings
+    // NOTE: "Unchecked runtime.lastError" warnings are browser-level warnings from Chrome's
+    // extension messaging API that Plaid Link uses. These CANNOT be suppressed from JavaScript
+    // as they're generated by the browser itself when the Plaid iframe communicates with
+    // Chrome extensions. They are completely harmless and don't affect functionality.
+    // 
+    // To hide them in Chrome DevTools: Use the console filter (click the filter icon)
+    // and add a negative filter: -"Unchecked runtime.lastError"
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    
+    console.error = function(...args) {
+        const message = args.join(' ');
+        // Filter out Plaid SDK's harmless messaging warnings (if they come through console.error)
+        if (message.includes('Unchecked runtime.lastError') || 
+            message.includes('message port closed') ||
+            message.includes('runtime.lastError')) {
+            return; // Suppress these warnings
+        }
+        originalError.apply(console, args);
+    };
+    
+    console.warn = function(...args) {
+        const message = args.join(' ');
+        // Filter out Plaid SDK's harmless messaging warnings (if they come through console.warn)
+        if (message.includes('Unchecked runtime.lastError') || 
+            message.includes('message port closed') ||
+            message.includes('runtime.lastError')) {
+            return; // Suppress these warnings
+        }
+        originalWarn.apply(console, args);
+    };
+    
+    // Suppress unhandled promise rejections from Plaid messaging
+    window.addEventListener('unhandledrejection', (event) => {
+        const message = event.reason?.message || String(event.reason || '');
+        if (message.includes('runtime.lastError') || 
+            message.includes('message port closed')) {
+            event.preventDefault(); // Suppress these warnings
+        }
+    });
     
     // Build accounts map for optimized lookups
     buildAccountsMap();
     
-    // Setup virtual scrolling FIRST (before filtering)
+    // Filter transactions FIRST (before dashboard initialization)
+    // This ensures filteredTransactions is set before updateTotalSpent() is called
+    filterTransactions();
+    
+    // Setup virtual scrolling (after filtering)
     setupVirtualScrolling();
     
-    // Then filter and render transactions
-    filterTransactions();
+    // Now initialize dashboard (which uses filteredTransactions)
+    initializeDashboard();
+    renderCategories();
+    setupEventListeners();
+    updateCurrentMonth();
     
     // Calculate account balances from transactions (this will update balances based on initialBalance + transactions)
     calculateAccountBalances();
@@ -1988,49 +1092,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // Theme Management
-function initializeTheme() {
-    // Check localStorage for saved theme preference, default to dark
-    const savedTheme = localStorage.getItem('theme') || 'dark';
-    setTheme(savedTheme);
-}
-
-function setTheme(theme) {
-    if (theme === 'light') {
-        document.body.classList.add('light-mode');
-        document.getElementById('theme-icon-sun').style.display = 'block';
-        document.getElementById('theme-icon-moon').style.display = 'none';
-    } else {
-        document.body.classList.remove('light-mode');
-        document.getElementById('theme-icon-sun').style.display = 'none';
-        document.getElementById('theme-icon-moon').style.display = 'block';
-    }
-    localStorage.setItem('theme', theme);
-}
-
-function toggleTheme() {
-    const isLight = document.body.classList.contains('light-mode');
-    setTheme(isLight ? 'dark' : 'light');
-}
-
-// Update Current Month
-function updateCurrentMonth() {
-    const now = new Date();
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 
-                       'July', 'August', 'September', 'October', 'November', 'December'];
-    const monthYear = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
-    document.getElementById('current-month').textContent = monthYear;
-}
-
-// Initialize Dashboard
-function initializeDashboard() {
-    updateTotalBalance();
-    updateTotalSpent();
-    recalculateCategorySpent(); // Recalculate from transactions to ensure accuracy
-    populateCategoryFilters();
-    populateAccountFilters();
-    renderAccounts();
-    renderCategories();
-}
+// Theme and dashboard functions are now in js/ui-helpers.js
 
 // Render Accounts
 function renderAccounts() {
@@ -2597,200 +1659,9 @@ function saveTotalSpent() {
     showToast('Total spent preferences updated', 'success');
 }
 
-// Calculate Total Balance (sum of selected accounts)
-function updateTotalBalance() {
-    let total = 0;
-    
-    accounts.forEach(acc => {
-        if (includedAccountIds.has(acc.id)) {
-            total += (acc.balance || 0);
-        }
-    });
-    
-    document.getElementById('total-balance').textContent = formatCurrency(total);
-}
+// Update functions (updateTotalBalance, updateTotalSpent, updateSyncButtonStatus, etc.) are now in js/ui-update.js
 
-// Update balance display in modal (sum of selected accounts)
-function updateBalanceDisplay() {
-    const accountsSumDisplay = document.getElementById('accounts-sum-display');
-    if (!accountsSumDisplay) return;
-    
-    let total = 0;
-    accounts.forEach(acc => {
-        const checkbox = document.getElementById(`balance-account-${acc.id}`);
-        if (checkbox && checkbox.checked) {
-            total += (acc.balance || 0);
-        }
-    });
-    
-    accountsSumDisplay.textContent = formatCurrency(total);
-}
-
-// Sync Time Tracking (for cost optimization)
-function saveAccountSyncTime(accountId, timestamp) {
-    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
-    syncTimes[accountId] = timestamp;
-    localStorage.setItem('accountSyncTimes', JSON.stringify(syncTimes));
-}
-
-function getAccountSyncTime(accountId) {
-    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
-    return syncTimes[accountId] || null;
-}
-
-function getLastSyncTime() {
-    // Get the most recent sync time across all accounts
-    const syncTimes = JSON.parse(localStorage.getItem('accountSyncTimes') || '{}');
-    const timestamps = Object.values(syncTimes);
-    return timestamps.length > 0 ? Math.max(...timestamps) : null;
-}
-
-function formatTimeAgo(timestamp) {
-    if (!timestamp) return 'Never';
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes} min${minutes !== 1 ? 's' : ''} ago`;
-    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
-}
-
-function getSyncStatusColor(timestamp) {
-    if (!timestamp) return 'var(--text-secondary)'; // Gray - never synced
-    const now = Date.now();
-    const diff = now - timestamp;
-    const hours = diff / 3600000;
-    
-    if (hours < 1) return 'var(--success-color)'; // Green - fresh
-    if (hours < 6) return 'var(--warning-color)'; // Yellow - getting old
-    return 'var(--danger-color)'; // Red - needs sync
-}
-
-function canSync() {
-    const lastSync = getLastSyncTime();
-    if (!lastSync) return true; // Never synced, allow sync
-    const now = Date.now();
-    const diff = now - lastSync;
-    const minutes = diff / 60000;
-    return minutes >= 5; // 5 minute cooldown
-}
-
-// Update Sync Button Status
-function updateSyncButtonStatus() {
-    const syncBtn = document.getElementById('sync-btn');
-    const syncBtnText = document.getElementById('sync-btn-text');
-    const syncLastTime = document.getElementById('sync-last-time');
-    const syncIndicator = document.getElementById('sync-status-indicator');
-    
-    if (!syncBtn || !syncBtnText || !syncLastTime || !syncIndicator) return;
-    
-    const lastSync = getLastSyncTime();
-    const canSyncNow = canSync();
-    const statusColor = getSyncStatusColor(lastSync);
-    
-    // Update indicator color
-    syncIndicator.style.background = statusColor;
-    
-    // Update last sync time text
-    if (lastSync) {
-        syncLastTime.textContent = `Last synced: ${formatTimeAgo(lastSync)}`;
-    } else {
-        syncLastTime.textContent = 'Never synced';
-    }
-    
-    // Disable button if synced recently
-    if (!canSyncNow && lastSync) {
-        syncBtn.disabled = true;
-        syncBtn.style.opacity = '0.6';
-        syncBtn.style.cursor = 'not-allowed';
-        syncBtnText.textContent = `Synced ${formatTimeAgo(lastSync)}`;
-    } else {
-        syncBtn.disabled = false;
-        syncBtn.style.opacity = '1';
-        syncBtn.style.cursor = 'pointer';
-        syncBtnText.textContent = 'Sync Transactions';
-    }
-}
-
-// Populate Sync Accounts Modal
-function populateSyncAccountsModal() {
-    const accountsList = document.getElementById('sync-accounts-list');
-    
-    if (!accountsList) return;
-    
-    accountsList.innerHTML = '';
-    
-    // Get only Plaid-connected accounts
-    const plaidAccounts = accounts.filter(acc => acc.plaidItemId && plaidItemIds.has(acc.id));
-    
-    if (plaidAccounts.length === 0) {
-        accountsList.innerHTML = '<p style="color: var(--text-secondary); padding: 1rem; text-align: center;">No Plaid accounts connected</p>';
-        return;
-    }
-    
-    // Create checkboxes for each Plaid account with last sync time
-    plaidAccounts.forEach(acc => {
-        const accountItem = document.createElement('div');
-        accountItem.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: var(--radius-md); margin-bottom: 0.5rem; background: var(--bg-secondary); transition: background 0.2s ease;';
-        accountItem.style.border = '1px solid var(--border-color)';
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.id = `sync-account-${acc.id}`;
-        checkbox.checked = true; // All selected by default
-        checkbox.style.cssText = 'width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color);';
-        
-        const lastSyncTime = getAccountSyncTime(acc.id);
-        const syncStatusColor = getSyncStatusColor(lastSyncTime);
-        
-        const label = document.createElement('label');
-        label.htmlFor = `sync-account-${acc.id}`;
-        label.style.cssText = 'flex: 1; cursor: pointer; display: flex; flex-direction: column; gap: 0.25rem;';
-        label.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
-                <span style="font-size: 0.75rem; color: var(--text-secondary); text-transform: capitalize;">${acc.type}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="width: 8px; height: 8px; border-radius: 50%; background: ${syncStatusColor};"></span>
-                <span style="font-size: 0.75rem; color: var(--text-secondary);">Last synced: ${formatTimeAgo(lastSyncTime)}</span>
-            </div>
-        `;
-        
-        accountItem.appendChild(checkbox);
-        accountItem.appendChild(label);
-        accountsList.appendChild(accountItem);
-    });
-}
-
-// Confirm Sync Selected Accounts
-async function confirmSyncSelectedAccounts() {
-    const selectedIds = [];
-    
-    accounts.forEach(acc => {
-        if (acc.plaidItemId && plaidItemIds.has(acc.id)) {
-            const checkbox = document.getElementById(`sync-account-${acc.id}`);
-            if (checkbox && checkbox.checked) {
-                selectedIds.push(acc.id);
-            }
-        }
-    });
-    
-    if (selectedIds.length === 0) {
-        showToast('Please select at least one account to sync', 'error');
-        return;
-    }
-    
-    // Close modal
-    document.getElementById('sync-accounts-modal').classList.remove('active');
-    
-    // Sync selected accounts
-    await syncAllTransactions(selectedIds);
-}
+// Filter population functions (populateSyncAccountsModal, confirmSyncSelectedAccounts) are now in js/ui-filters.js
 
 // Edit Total Balance
 function editTotalBalance() {
@@ -2863,74 +1734,7 @@ function saveTotalBalance() {
     showToast('Total balance updated', 'success');
 }
 
-// Calculate Total Spent (for filtered transactions)
-// Only count expenses (positive amounts), not income (negative amounts)
-// Respects user preferences for categories, accounts, and exempt transactions
-function updateTotalSpent() {
-    const total = filteredTransactions
-        .filter(t => {
-            // Only expenses
-            if (t.status === 'removed' || t.amount <= 0) return false;
-            
-            // Check account filter
-            if (includedSpentAccountIds.size > 0 && !includedSpentAccountIds.has(t.accountId)) return false;
-            
-            // Check category filter
-            if (t.category) {
-                // Has category - check if category is included
-                const category = categories.find(c => c.name === t.category);
-                if (category && includedSpentCategoryIds.size > 0 && !includedSpentCategoryIds.has(category.id)) {
-                    return false;
-                }
-            } else {
-                // No category (exempt) - check if exempt is included
-                if (!includeExemptInSpent) return false;
-            }
-            
-            return true;
-        })
-        .reduce((sum, t) => sum + t.amount, 0);
-    document.getElementById('total-spent').textContent = formatCurrency(total);
-}
-
-// Update Category Summary (shows all budget categories with their spent amounts)
-function updateCategorySummary() {
-    // Calculate spent amounts from filtered transactions - only expenses, not income
-    const categorySpending = {};
-    filteredTransactions
-        .filter(t => t.status !== 'removed' && t.category && t.amount > 0) // Only expenses
-        .forEach(t => {
-            categorySpending[t.category] = (categorySpending[t.category] || 0) + t.amount;
-        });
-
-    const summaryEl = document.getElementById('category-summary');
-    if (!summaryEl) return; // Safety check
-    
-    summaryEl.innerHTML = '';
-
-    if (categories.length === 0) {
-        summaryEl.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.875rem;">No categories yet</span>';
-        return;
-    }
-
-    // Show all categories from the categories array, sorted by spent amount
-    const sortedCategories = [...categories].sort((a, b) => {
-        const aSpent = categorySpending[a.name] || 0;
-        const bSpent = categorySpending[b.name] || 0;
-        return bSpent - aSpent;
-    });
-
-    sortedCategories.forEach(cat => {
-        const spent = categorySpending[cat.name] || 0;
-        const chip = document.createElement('div');
-        chip.className = 'category-chip';
-        chip.innerHTML = `
-            <span class="category-chip-name">${cat.name}</span>
-            <span class="category-chip-amount">${formatCurrency(spent)}</span>
-        `;
-        summaryEl.appendChild(chip);
-    });
-}
+// Update functions (updateTotalSpent, updateCategorySummary) are now in js/ui-update.js
 
 // Update Accounts Summary (shows all accounts with balances)
 function updateAccountsSummary() {
@@ -2965,30 +1769,7 @@ function updateDashboardForFilteredTransactions() {
     renderCategoriesExpanded(); // Update expanded view
 }
 
-// Populate Account Filters
-function populateAccountFilters() {
-    const filterSelect = document.getElementById('filter-account');
-    filterSelect.innerHTML = '<option value="">All Accounts</option>';
-    accounts.forEach(acc => {
-        const option = document.createElement('option');
-        option.value = acc.id;
-        option.textContent = `${acc.name} ••••${acc.mask}`;
-        filterSelect.appendChild(option);
-    });
-}
-
-// Populate Category Filters
-function populateCategoryFilters() {
-    const filterSelect = document.getElementById('filter-category');
-    // Clear existing options except "All Categories"
-    filterSelect.innerHTML = '<option value="">All Categories</option><option value="exempt">Exempt</option>';
-    categories.forEach(cat => {
-        const option = document.createElement('option');
-        option.value = cat.name;
-        option.textContent = cat.name;
-        filterSelect.appendChild(option);
-    });
-}
+// Filter population functions are now in js/ui-filters.js
 
 // Render Categories
 function renderCategories() {
@@ -3126,14 +1907,15 @@ let virtualScrollState = {
     startIndex: 0,
     endIndex: 0,
     visibleCount: 0,
-    scrollTop: 0
+    scrollTop: 0,
+    enabled: true, // Enable virtual scrolling for large datasets
+    threshold: 200 // Enable virtual scrolling when > 200 transactions
 };
 
-// Calculate visible rows for virtual scrolling (with fallback)
+// Calculate visible rows for virtual scrolling
 function calculateVisibleRows() {
     const tbody = document.getElementById('transactions-body');
     if (!tbody || filteredTransactions.length === 0) {
-        // Set defaults if no transactions
         virtualScrollState.startIndex = 0;
         virtualScrollState.endIndex = 0;
         virtualScrollState.visibleCount = 0;
@@ -3149,30 +1931,25 @@ function calculateVisibleRows() {
         return;
     }
     
-    // Force container to have a height if it doesn't
     const containerHeight = container.clientHeight || container.offsetHeight;
     const scrollTop = container.scrollTop || 0;
     
-    // If container has no height yet, try to use parent height or fallback
+    // If container has no height yet, estimate from parent
     if (containerHeight === 0 || containerHeight < 100) {
         const parent = container.parentElement;
-        if (parent) {
-            const parentHeight = parent.clientHeight;
-            if (parentHeight > 200) {
-                // Use parent height minus header and padding
-                const estimatedHeight = parentHeight - 250; // Account for header and padding
-                if (estimatedHeight > 100) {
-                    virtualScrollState.visibleCount = Math.ceil(estimatedHeight / virtualScrollState.rowHeight);
-                    virtualScrollState.startIndex = Math.max(0, Math.floor(scrollTop / virtualScrollState.rowHeight) - virtualScrollState.buffer);
-                    virtualScrollState.endIndex = Math.min(
-                        filteredTransactions.length,
-                        virtualScrollState.startIndex + virtualScrollState.visibleCount + (virtualScrollState.buffer * 2)
-                    );
-                    return;
-                }
+        if (parent && parent.clientHeight > 200) {
+            const estimatedHeight = parent.clientHeight - 250;
+            if (estimatedHeight > 100) {
+                virtualScrollState.visibleCount = Math.ceil(estimatedHeight / virtualScrollState.rowHeight);
+                virtualScrollState.startIndex = Math.max(0, Math.floor(scrollTop / virtualScrollState.rowHeight) - virtualScrollState.buffer);
+                virtualScrollState.endIndex = Math.min(
+                    filteredTransactions.length,
+                    virtualScrollState.startIndex + virtualScrollState.visibleCount + (virtualScrollState.buffer * 2)
+                );
+                return;
             }
         }
-        // Final fallback: render first 50 rows to ensure visibility
+        // Final fallback
         virtualScrollState.startIndex = 0;
         virtualScrollState.endIndex = Math.min(50, filteredTransactions.length);
         virtualScrollState.visibleCount = virtualScrollState.endIndex;
@@ -3180,7 +1957,7 @@ function calculateVisibleRows() {
     }
     
     virtualScrollState.scrollTop = scrollTop;
-    virtualScrollState.visibleCount = Math.ceil(containerHeight / virtualScrollState.rowHeight) + 5; // Add buffer
+    virtualScrollState.visibleCount = Math.ceil(containerHeight / virtualScrollState.rowHeight) + 5;
     virtualScrollState.startIndex = Math.max(0, Math.floor(scrollTop / virtualScrollState.rowHeight) - virtualScrollState.buffer);
     virtualScrollState.endIndex = Math.min(
         filteredTransactions.length,
@@ -3262,17 +2039,15 @@ function renderTransactionRow(transaction) {
     return row;
 }
 
-// Render Transactions
+// Render Transactions with Virtual Scrolling
 function renderTransactions() {
     const tbody = document.getElementById('transactions-body');
     if (!tbody) return;
     
-    // CLEAR the tbody completely - remove all child nodes
+    // Clear tbody completely
     while (tbody.firstChild) {
         tbody.removeChild(tbody.firstChild);
     }
-    
-    // Also set innerHTML to empty string as backup
     tbody.innerHTML = '';
 
     if (filteredTransactions.length === 0) {
@@ -3283,95 +2058,71 @@ function renderTransactions() {
         return;
     }
 
-    // Performance optimization: For large datasets, use batched rendering
-    // This prevents browser from freezing when rendering thousands of rows
-    const LARGE_DATASET_THRESHOLD = 500;
+    // Enable virtual scrolling for large datasets
+    const useVirtualScrolling = virtualScrollState.enabled && filteredTransactions.length > virtualScrollState.threshold;
     
-    // Debug: Log transaction count and date range
-    if (filteredTransactions.length > 0) {
-        // Get actual date range from filtered transactions (not sorted order)
-        const dates = filteredTransactions.map(t => {
-            if (typeof t.date === 'string') return t.date;
-            return new Date(t.date).toISOString().split('T')[0];
-        }).sort();
-        const earliestDate = dates[0];
-        const latestDate = dates[dates.length - 1];
-        const firstDisplayed = filteredTransactions[0].date;
-        const lastDisplayed = filteredTransactions[filteredTransactions.length - 1].date;
-        console.log(`Rendering ${filteredTransactions.length} transactions`);
-        console.log(`Date range in data: ${earliestDate} to ${latestDate}`);
-        console.log(`First displayed (sorted): ${firstDisplayed}, Last displayed: ${lastDisplayed}`);
-    }
-    
-    if (filteredTransactions.length > LARGE_DATASET_THRESHOLD) {
-        // Use batched rendering to prevent browser freeze
-        renderTransactionsBatched(filteredTransactions, tbody);
+    if (useVirtualScrolling) {
+        // Virtual scrolling: only render visible rows
+        calculateVisibleRows();
+        const visibleTransactions = filteredTransactions.slice(
+            virtualScrollState.startIndex,
+            virtualScrollState.endIndex
+        );
+        
+        // Add top spacer
+        const topSpacer = document.createElement('tr');
+        topSpacer.style.height = `${virtualScrollState.startIndex * virtualScrollState.rowHeight}px`;
+        topSpacer.innerHTML = '<td colspan="7" style="padding: 0; border: none;"></td>';
+        tbody.appendChild(topSpacer);
+        
+        // Render visible rows
+        visibleTransactions.forEach(t => {
+            const row = renderTransactionRow(t);
+            tbody.appendChild(row);
+        });
+        
+        // Add bottom spacer
+        const bottomSpacer = document.createElement('tr');
+        const remainingRows = filteredTransactions.length - virtualScrollState.endIndex;
+        bottomSpacer.style.height = `${remainingRows * virtualScrollState.rowHeight}px`;
+        bottomSpacer.innerHTML = '<td colspan="7" style="padding: 0; border: none;"></td>';
+        tbody.appendChild(bottomSpacer);
     } else {
         // Small dataset: render all at once
         filteredTransactions.forEach(t => {
             const row = renderTransactionRow(t);
             tbody.appendChild(row);
         });
-        updateSortIndicators();
     }
+    
+    updateSortIndicators();
 }
 
-// Batched rendering for large datasets (prevents browser freeze)
-function renderTransactionsBatched(transactionsToRender, tbody) {
-    const BATCH_SIZE = 100; // Render 100 rows at a time
-    let currentIndex = 0;
-    const totalCount = transactionsToRender.length;
-    
-    // Show loading indicator
-    const loadingRow = document.createElement('tr');
-    loadingRow.id = 'loading-indicator';
-    loadingRow.innerHTML = `<td colspan="7" style="text-align: center; padding: 1rem; color: var(--text-secondary);">
-        Rendering ${totalCount} transactions... (${currentIndex}/${totalCount})
-    </td>`;
-    tbody.appendChild(loadingRow);
-    
-    function renderBatch() {
-        const endIndex = Math.min(currentIndex + BATCH_SIZE, totalCount);
-        
-        // Remove loading indicator
-        const loadingEl = document.getElementById('loading-indicator');
-        if (loadingEl) loadingEl.remove();
-        
-        // Render batch
-        for (let i = currentIndex; i < endIndex; i++) {
-            const row = renderTransactionRow(transactionsToRender[i]);
-            tbody.appendChild(row);
-        }
-        
-        currentIndex = endIndex;
-        
-        // Update progress if not done
-        if (currentIndex < totalCount) {
-            const progressRow = document.createElement('tr');
-            progressRow.id = 'loading-indicator';
-            progressRow.innerHTML = `<td colspan="7" style="text-align: center; padding: 0.5rem; color: var(--text-secondary); font-size: 0.75rem;">
-                Rendering... ${currentIndex}/${totalCount} transactions
-            </td>`;
-            tbody.appendChild(progressRow);
-            
-            // Continue with next batch (use setTimeout to allow browser to breathe)
-            setTimeout(renderBatch, 0);
-        } else {
-            // All done - remove progress indicator and update sort
-            const progressEl = document.getElementById('loading-indicator');
-            if (progressEl) progressEl.remove();
-            updateSortIndicators();
-        }
-    }
-    
-    // Start rendering
-    renderBatch();
-}
+// Note: Batched rendering removed - now using virtual scrolling for better performance
 
 // Setup virtual scrolling listener
 function setupVirtualScrolling() {
-    // Virtual scrolling disabled - render all transactions at once
-    // Can be re-enabled if performance becomes an issue with large datasets
+    const container = document.querySelector('.table-container');
+    if (!container) return;
+    
+    // Throttled scroll handler for virtual scrolling
+    const handleScroll = throttle(() => {
+        if (virtualScrollState.enabled && filteredTransactions.length > virtualScrollState.threshold) {
+            renderTransactions();
+        }
+    }, 16); // ~60fps
+    
+    container.addEventListener('scroll', handleScroll);
+    
+    // Also handle resize to recalculate visible rows
+    const handleResize = debounce(() => {
+        if (virtualScrollState.enabled && filteredTransactions.length > virtualScrollState.threshold) {
+            calculateVisibleRows();
+            renderTransactions();
+        }
+    }, 250);
+    
+    window.addEventListener('resize', handleResize);
 }
 
 // Edit Transaction Function
@@ -3671,6 +2422,20 @@ function filterTransactions() {
     const accountFilter = document.getElementById('filter-account').value;
     const dateRange = getDateRange();
     const filterType = document.getElementById('filter-date-range').value;
+    
+    // For custom range, require both dates to be present
+    if (filterType === 'custom') {
+        const startInput = document.getElementById('filter-date-start').value;
+        const endInput = document.getElementById('filter-date-end').value;
+        
+        // If either date is missing, show no transactions
+        if (!startInput || !endInput) {
+            filteredTransactions = [];
+            renderTransactions();
+            updateDashboardForFilteredTransactions();
+            return;
+        }
+    }
     
     // Debug: Log date range for custom filters
     if (filterType === 'custom' && dateRange.startDate && dateRange.endDate) {
@@ -4194,7 +2959,12 @@ function setupEventListeners() {
         try {
             await initializePlaidLink();
         } catch (error) {
-            showPlaidError(error.message || 'Failed to initialize Plaid connection');
+            const showError = window.showPlaidError || (typeof showPlaidError !== 'undefined' ? showPlaidError : null);
+            if (showError) {
+                showError(error.message || 'Failed to initialize Plaid connection');
+            } else if (typeof showToast !== 'undefined') {
+                showToast(error.message || 'Failed to initialize Plaid connection', 'error');
+            }
         }
     });
 
@@ -4782,37 +3552,5 @@ function editCategory(id) {
     }
 }
 
-// Utility Functions
-function formatCurrency(amount) {
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD'
-    }).format(amount);
-}
-
-function formatDate(dateString) {
-    // Parse date string directly to avoid timezone conversion issues
-    // If dateString is already YYYY-MM-DD format, parse it directly
-    if (typeof dateString === 'string' && dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        const [year, month, day] = dateString.split('-').map(Number);
-        const date = new Date(year, month - 1, day); // month is 0-indexed
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-        });
-    }
-    
-    // Fallback for other date formats
-    const date = new Date(dateString);
-    if (isNaN(date.getTime())) {
-        return dateString; // Return as-is if invalid
-    }
-    
-    return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-    });
-}
+// Note: formatCurrency and formatDate are now in js/utils.js
 

@@ -427,23 +427,32 @@ const tokenStorage = new SecureTokenStorage();
 const userStorage = new UserStorage();
 
 // Initialize data directory and security keys on startup
-(async () => {
-    // Check process security first
-    checkProcessSecurity();
-    
-    await initDataDir();
-    await ensureSecurityKeys();
-    
-    // Reload .env after ensuring keys exist
-    delete require.cache[require.resolve('dotenv')];
-    require('dotenv').config({ override: true });
-    
-    // Update keys from .env after ensuring they exist
-    if (process.env.JWT_SECRET && !process.env.JWT_SECRET.includes('your_')) {
-        JWT_SECRET = process.env.JWT_SECRET;
-    }
-    if (process.env.ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY.includes('your_')) {
-        ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+// This MUST complete before server starts
+let serverInitialized = false;
+const initPromise = (async () => {
+    try {
+        // Check process security first
+        checkProcessSecurity();
+        
+        await initDataDir();
+        await ensureSecurityKeys();
+        
+        // Reload .env after ensuring keys exist
+        delete require.cache[require.resolve('dotenv')];
+        require('dotenv').config({ override: true });
+        
+        // Update keys from .env after ensuring they exist
+        if (process.env.JWT_SECRET && !process.env.JWT_SECRET.includes('your_')) {
+            JWT_SECRET = process.env.JWT_SECRET;
+        }
+        if (process.env.ENCRYPTION_KEY && !process.env.ENCRYPTION_KEY.includes('your_')) {
+            ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+        }
+        
+        serverInitialized = true;
+    } catch (error) {
+        console.error('❌ Failed to initialize server:', error);
+        process.exit(1);
     }
 })();
 
@@ -946,30 +955,107 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// Global error handler middleware (must be before static files)
+app.use((err, req, res, next) => {
+    console.error('Unhandled route error:', err);
+    res.status(500).json({
+        error: 'Internal server error',
+        message: NODE_ENV === 'development' ? err.message : 'An error occurred'
+    });
+});
+
 // Serve static files (HTML, CSS, JS) - must be after all API routes
 app.use(express.static(path.join(__dirname)));
 
-// Start server - bind to localhost for local-only use
-const SERVER_HOST = process.env.SERVER_HOST || (NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
-app.listen(PORT, SERVER_HOST, () => {
-    if (NODE_ENV === 'development') {
-        console.log(`Server running on http://localhost:${PORT}`);
-        if (SERVER_HOST === '127.0.0.1') {
-            console.log(`✅ Local-only mode: Server accessible only from localhost`);
-        } else {
-            const networkInterfaces = require('os').networkInterfaces();
-            const localIP = Object.values(networkInterfaces)
-                .flat()
-                .find(i => i.family === 'IPv4' && !i.internal)?.address;
-            if (localIP) {
-                console.log(`⚠️  Server also accessible at http://${localIP}:${PORT}`);
-                console.log(`   Set SERVER_HOST=127.0.0.1 in .env for local-only access`);
-            }
-        }
-        console.log(`Plaid environment: ${process.env.PLAID_ENV || 'sandbox'}`);
-    }
-    // Production: minimal logging
+// Global error handlers to prevent crashes
+process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    console.error('Stack:', error.stack);
+    // In development, continue running to help debug
+    // In production, exit and let process manager restart
     if (NODE_ENV === 'production') {
-        console.log(`Server started on port ${PORT}`);
+        console.error('Exiting due to uncaught exception in production');
+        process.exit(1);
+    } else {
+        console.error('⚠️  Continuing in development mode (server may be unstable)');
     }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise);
+    console.error('Reason:', reason);
+    // Log but don't exit - most unhandled rejections are recoverable
+    // Only exit in production for critical errors
+    if (NODE_ENV === 'production' && reason && typeof reason === 'object' && reason.code === 'ECONNREFUSED') {
+        console.error('Critical connection error in production, exiting');
+        process.exit(1);
+    }
+});
+
+// Handle server errors
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    process.exit(0);
+});
+
+// Start server - bind to localhost for local-only use
+// Wait for initialization to complete before starting server
+const SERVER_HOST = process.env.SERVER_HOST || (NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+
+// Ensure initialization completes before starting server
+initPromise.then(() => {
+    if (!serverInitialized) {
+        console.error('❌ Server initialization failed');
+        process.exit(1);
+        return;
+    }
+    
+    // Wrap server startup in try-catch to handle port binding errors
+    try {
+        const server = app.listen(PORT, SERVER_HOST, () => {
+        if (NODE_ENV === 'development') {
+            console.log(`Server running on http://localhost:${PORT}`);
+            if (SERVER_HOST === '127.0.0.1') {
+                console.log(`✅ Local-only mode: Server accessible only from localhost`);
+            } else {
+                const networkInterfaces = require('os').networkInterfaces();
+                const localIP = Object.values(networkInterfaces)
+                    .flat()
+                    .find(i => i.family === 'IPv4' && !i.internal)?.address;
+                if (localIP) {
+                    console.log(`⚠️  Server also accessible at http://${localIP}:${PORT}`);
+                    console.log(`   Set SERVER_HOST=127.0.0.1 in .env for local-only access`);
+                }
+            }
+            console.log(`Plaid environment: ${process.env.PLAID_ENV || 'sandbox'}`);
+        }
+        // Production: minimal logging
+        if (NODE_ENV === 'production') {
+            console.log(`Server started on port ${PORT}`);
+        }
+    });
+
+        // Handle server errors
+        server.on('error', (error) => {
+            if (error.code === 'EADDRINUSE') {
+                console.error(`❌ Port ${PORT} is already in use. Please kill the process using that port or use a different port.`);
+                console.error(`   To kill existing process: lsof -ti:${PORT} | xargs kill -9`);
+                process.exit(1);
+            } else {
+                console.error('Server error:', error);
+                // Don't exit on other errors - let it try to recover
+            }
+        });
+    } catch (error) {
+        console.error('Failed to start server:', error);
+        process.exit(1);
+    }
+}).catch((error) => {
+    console.error('❌ Server initialization error:', error);
+    process.exit(1);
 });

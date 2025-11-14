@@ -32,7 +32,7 @@
             <div class="dashboard-item">
                 <span class="dashboard-label">Total Spent</span>
                 <div class="dashboard-value-container">
-                    <span class="dashboard-value spent" id="total-spent">$2,145.67</span>
+                    <span class="dashboard-value spent" id="total-spent">$0.00</span>
                     <button class="btn-icon-small" id="edit-total-spent" aria-label="Edit total spent" title="Edit">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -618,9 +618,20 @@
 
     <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
     <script src="config.js"></script>
+    <!-- Core utility modules -->
+    <script src="js/utils.js"></script>
+    <script src="js/db.js"></script>
+    <script src="js/data.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/plaid.js"></script>
     <!-- Error handling and validation modules -->
     <script src="js/error-handler.js"></script>
     <script src="js/validation.js"></script>
+    <!-- UI modules -->
+    <script src="js/ui-helpers.js"></script>
+    <script src="js/ui-filters.js"></script>
+    <script src="js/ui-update.js"></script>
+    <script src="js/ui-render.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

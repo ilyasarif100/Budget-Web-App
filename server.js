@@ -1025,25 +1025,27 @@ app.get('/sw.js', (req, res) => {
 
 // Global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception:', error);
-    console.error('Stack:', error.stack);
+    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
     // In development, continue running to help debug
     // In production, exit and let process manager restart
     if (NODE_ENV === 'production') {
-        console.error('Exiting due to uncaught exception in production');
+        logger.error('Exiting due to uncaught exception in production');
         process.exit(1);
     } else {
-        console.error('⚠️  Continuing in development mode (server may be unstable)');
+        logger.warn('Continuing in development mode (server may be unstable)');
     }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection at:', promise);
-    console.error('Reason:', reason);
+    logger.error('Unhandled Rejection', { 
+        reason: reason?.message || reason,
+        stack: reason?.stack,
+        promise: promise?.toString()
+    });
     // Log but don't exit - most unhandled rejections are recoverable
     // Only exit in production for critical errors
     if (NODE_ENV === 'production' && reason && typeof reason === 'object' && reason.code === 'ECONNREFUSED') {
-        console.error('Critical connection error in production, exiting');
+        logger.error('Critical connection error in production, exiting');
         process.exit(1);
     }
 });

@@ -44,3 +44,7 @@ dist/
 build/
 *.min.js
 *.min.css
+
+# Test coverage
+coverage/
+*.lcov

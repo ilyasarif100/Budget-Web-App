@@ -5,7 +5,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
@@ -94,7 +95,7 @@ function validateFilePath(filePath, baseDir) {
 // Initialize data directory
 async function initDataDir() {
     try {
-        await fs.mkdir(DATA_DIR, { recursive: true });
+        await fsPromises.mkdir(DATA_DIR, { recursive: true });
     } catch (error) {
         console.error('Error creating data directory:', error);
     }
@@ -108,13 +109,13 @@ async function ensureSecurityKeys() {
         
         // Read existing .env or create from template
         try {
-            envContent = await fs.readFile(ENV_FILE, 'utf8');
+            envContent = await fsPromises.readFile(ENV_FILE, 'utf8');
             envExists = true;
         } catch {
             // .env doesn't exist, try to copy from template
             try {
                 const templatePath = path.join(__dirname, 'env.template');
-                envContent = await fs.readFile(templatePath, 'utf8');
+                envContent = await fsPromises.readFile(templatePath, 'utf8');
                 envExists = false;
             } catch {
                 // Template doesn't exist, create minimal .env
@@ -153,14 +154,14 @@ async function ensureSecurityKeys() {
             
             // Save updated .env
             const safeEnvPath = validateFilePath(ENV_FILE, __dirname);
-            await fs.writeFile(safeEnvPath, envContent, { 
+            await fsPromises.writeFile(safeEnvPath, envContent, { 
                 encoding: 'utf8',
                 mode: 0o600 // Owner read/write only
             });
             
             // Ensure permissions (for Mac/Linux)
             if (process.platform !== 'win32') {
-                await fs.chmod(safeEnvPath, 0o600);
+                await fsPromises.chmod(safeEnvPath, 0o600);
             }
             
             console.log('✅ Security keys auto-generated and saved to .env');
@@ -250,7 +251,7 @@ class SecureTokenStorage {
     async loadTokens() {
         try {
             const safePath = validateFilePath(TOKENS_FILE, DATA_DIR);
-            const data = await fs.readFile(safePath, 'utf8');
+            const data = await fsPromises.readFile(safePath, 'utf8');
             const tokens = JSON.parse(data);
             for (const [userId, userTokens] of Object.entries(tokens)) {
                 this.tokens.set(userId, new Map(Object.entries(userTokens)));
@@ -269,13 +270,13 @@ class SecureTokenStorage {
             }
             const jsonData = JSON.stringify(data, null, 2);
             const safePath = validateFilePath(TOKENS_FILE, DATA_DIR);
-            await fs.writeFile(safePath, jsonData, { 
+            await fsPromises.writeFile(safePath, jsonData, { 
                 encoding: 'utf8',
                 mode: 0o600 // Owner read/write only
             });
             // Ensure permissions (for Mac/Linux)
             if (process.platform !== 'win32') {
-                await fs.chmod(safePath, 0o600);
+                await fsPromises.chmod(safePath, 0o600);
             }
         } catch (error) {
             console.error('Error saving tokens:', error);
@@ -335,7 +336,7 @@ class UserStorage {
     async loadUsers() {
         try {
             const safePath = validateFilePath(USERS_FILE, DATA_DIR);
-            const data = await fs.readFile(safePath, 'utf8');
+            const data = await fsPromises.readFile(safePath, 'utf8');
             const users = JSON.parse(data);
             for (const [id, user] of Object.entries(users)) {
                 this.users.set(id, user);
@@ -351,13 +352,13 @@ class UserStorage {
             const data = Object.fromEntries(this.users);
             const jsonData = JSON.stringify(data, null, 2);
             const safePath = validateFilePath(USERS_FILE, DATA_DIR);
-            await fs.writeFile(safePath, jsonData, { 
+            await fsPromises.writeFile(safePath, jsonData, { 
                 encoding: 'utf8',
                 mode: 0o600 // Owner read/write only
             });
             // Ensure permissions (for Mac/Linux)
             if (process.platform !== 'win32') {
-                await fs.chmod(safePath, 0o600);
+                await fsPromises.chmod(safePath, 0o600);
             }
         } catch (error) {
             console.error('Error saving users:', error);

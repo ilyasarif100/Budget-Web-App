@@ -10,7 +10,8 @@
     "build": "npm run minify && npm run copy-assets && npm run build-prod-html",
     "build-prod-html": "cp index.prod.html dist/index.html",
     "copy-assets": "mkdir -p dist && mkdir -p dist/css && cp css/styles.css dist/css/ && cp config.js dist/ && cp sw.js dist/ && cp -r js dist/ && mkdir -p dist/workers && cp workers/*.js dist/workers/ 2>/dev/null || true",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backup": "node scripts/backup.js"
   },
   "keywords": [
     "budget",

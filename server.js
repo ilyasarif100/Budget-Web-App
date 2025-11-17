@@ -60,13 +60,13 @@ function sanitizeInput(input) {
 function checkProcessSecurity() {
     // Warn if running as root (security risk)
     if (process.getuid && process.getuid() === 0) {
-        console.warn('⚠️  SECURITY WARNING: Server is running as root user!');
-        console.warn('   This is a security risk. Consider running as a non-root user.');
+        logger.warn('SECURITY WARNING: Server is running as root user!');
+        logger.warn('This is a security risk. Consider running as a non-root user.');
     }
     
     // Check if we're in a secure environment
     if (process.env.NODE_ENV === 'production' && process.env.AUTH_REQUIRED === 'false') {
-        console.warn('⚠️  SECURITY WARNING: Authentication disabled in production!');
+        logger.warn('SECURITY WARNING: Authentication disabled in production!');
     }
 }
 
@@ -98,7 +98,7 @@ async function initDataDir() {
     try {
         await fsPromises.mkdir(DATA_DIR, { recursive: true });
     } catch (error) {
-        console.error('Error creating data directory:', error);
+        logger.error('Error creating data directory', { error: error.message });
     }
 }
 

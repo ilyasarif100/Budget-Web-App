@@ -202,6 +202,23 @@
             </svg>
             Export CSV / Excel
         </button>
+        <button class="btn-secondary" id="backup-data-btn" title="Export all data for backup">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Backup All Data
+        </button>
+        <button class="btn-secondary" id="restore-data-btn" title="Import and restore from backup">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 16 12 21 17 16"></polyline>
+                <line x1="12" y1="21" x2="12" y2="9"></line>
+            </svg>
+            Restore Data
+        </button>
+        <input type="file" id="restore-file-input" accept=".json" style="display: none;">
         <button class="btn-danger" id="clear-data-btn" style="margin-left: auto;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"></polyline>
@@ -630,6 +647,9 @@
     <!-- Error handling and validation modules -->
     <script src="js/error-handler.js"></script>
     <script src="js/validation.js"></script>
+    <!-- Backup and restore modules -->
+    <script src="js/backup.js"></script>
+    <script src="js/restore.js"></script>
     <!-- UI modules -->
     <script src="js/ui-helpers.js"></script>
     <script src="js/ui-filters.js"></script>

@@ -3178,6 +3178,47 @@ function setupEventListeners() {
         exportToCSV();
     });
 
+    // Backup All Data Button
+    const backupDataBtn = document.getElementById('backup-data-btn');
+    if (backupDataBtn && typeof exportAllDataToFile !== 'undefined') {
+        backupDataBtn.addEventListener('click', async () => {
+            try {
+                await exportAllDataToFile();
+            } catch (error) {
+                console.error('Error backing up data:', error);
+                if (typeof showToast !== 'undefined') {
+                    showToast('Error backing up data: ' + error.message, 'error');
+                }
+            }
+        });
+    }
+
+    // Restore Data Button
+    const restoreDataBtn = document.getElementById('restore-data-btn');
+    const restoreFileInput = document.getElementById('restore-file-input');
+    if (restoreDataBtn && restoreFileInput && typeof importAndRestoreData !== 'undefined') {
+        restoreDataBtn.addEventListener('click', () => {
+            restoreFileInput.click();
+        });
+
+        restoreFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                try {
+                    await importAndRestoreData(file, 'replace');
+                } catch (error) {
+                    console.error('Error restoring data:', error);
+                    if (typeof showToast !== 'undefined') {
+                        showToast('Error restoring data: ' + error.message, 'error');
+                    }
+                } finally {
+                    // Reset file input
+                    restoreFileInput.value = '';
+                }
+            }
+        });
+    }
+
     // Clear Data Modal
     const clearDataBtn = document.getElementById('clear-data-btn');
     const clearDataModal = document.getElementById('clear-data-modal');

@@ -687,7 +687,7 @@ app.post('/api/auth/register', async (req, res) => {
         });
     } catch (error) {
         if (password) secureClear(password);
-        console.error('Error registering user:', error);
+        logger.logError(error, { context: 'User Registration' });
         res.status(500).json({ error: 'Failed to register user' });
     }
 });
@@ -735,7 +735,7 @@ app.post('/api/auth/login', async (req, res) => {
         });
     } catch (error) {
         if (password) secureClear(password);
-        console.error('Error logging in:', error);
+        logger.logError(error, { context: 'User Login' });
         res.status(500).json({ error: 'Failed to login' });
     }
 });

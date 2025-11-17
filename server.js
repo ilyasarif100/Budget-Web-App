@@ -280,7 +280,7 @@ class SecureTokenStorage {
                 await fsPromises.chmod(safePath, 0o600);
             }
         } catch (error) {
-            console.error('Error saving tokens:', error);
+            logger.logError(error, { context: 'Save Tokens' });
         }
     }
 
@@ -362,7 +362,7 @@ class UserStorage {
                 await fsPromises.chmod(safePath, 0o600);
             }
         } catch (error) {
-            console.error('Error saving users:', error);
+            logger.logError(error, { context: 'Save Users' });
         }
     }
 

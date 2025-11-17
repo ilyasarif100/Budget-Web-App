@@ -29,6 +29,13 @@ class ErrorHandler {
         // Console error for debugging
         console.error(`[${context}]`, errorInfo);
         
+        // Report error to backend if API is available
+        if (typeof window !== 'undefined' && window.CONFIG && window.CONFIG.API_BASE_URL) {
+            this.reportToBackend(errorInfo, context).catch(err => {
+                console.error('Failed to report error to backend:', err);
+            });
+        }
+        
         return errorInfo;
     }
 
@@ -124,6 +131,38 @@ class ErrorHandler {
 
         // Default
         return 'An error occurred. Please try again or refresh the page.';
+    }
+
+    /**
+     * Report error to backend
+     */
+    async reportToBackend(errorInfo, context) {
+        try {
+            const response = await fetch(`${window.CONFIG.API_BASE_URL}/errors`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    error: {
+                        message: errorInfo.message,
+                        code: errorInfo.code,
+                        stack: errorInfo.details?.stack,
+                        name: errorInfo.details?.name
+                    },
+                    context: context,
+                    userAgent: navigator.userAgent,
+                    url: window.location.href
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Error reporting failed: ${response.status}`);
+            }
+        } catch (error) {
+            // Silently fail - don't break the app if error reporting fails
+            console.error('Error reporting to backend:', error);
+        }
     }
 
     /**

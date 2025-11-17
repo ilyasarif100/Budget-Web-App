@@ -35,7 +35,8 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "plaid": "^24.0.0"
+    "plaid": "^24.0.0",
+    "winston": "^3.18.3"
   },
   "devDependencies": {
     "@jest/globals": "^30.2.0",

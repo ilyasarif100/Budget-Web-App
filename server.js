@@ -10,6 +10,7 @@ const fsPromises = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
+const logger = require('./utils/logger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -164,14 +165,14 @@ async function ensureSecurityKeys() {
                 await fsPromises.chmod(safeEnvPath, 0o600);
             }
             
-            console.log('✅ Security keys auto-generated and saved to .env');
+            logger.info('Security keys auto-generated and saved to .env');
             
             // Reload environment variables
             require('dotenv').config({ override: true });
         }
     } catch (error) {
-        console.error('Warning: Could not ensure security keys:', error.message);
-        console.log('Please manually set JWT_SECRET and ENCRYPTION_KEY in .env');
+        logger.warn('Could not ensure security keys', { error: error.message });
+        logger.info('Please manually set JWT_SECRET and ENCRYPTION_KEY in .env');
     }
 }
 
@@ -182,11 +183,11 @@ let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 // If keys are still missing, generate temporary ones (will be saved on next run)
 if (!JWT_SECRET || JWT_SECRET.includes('your_')) {
     JWT_SECRET = crypto.randomBytes(64).toString('hex');
-    console.warn('⚠️  JWT_SECRET not set in .env - using temporary key (will be lost on restart)');
+    logger.warn('JWT_SECRET not set in .env - using temporary key (will be lost on restart)');
 }
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.includes('your_')) {
     ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
-    console.warn('⚠️  ENCRYPTION_KEY not set in .env - using temporary key (will be lost on restart)');
+    logger.warn('ENCRYPTION_KEY not set in .env - using temporary key (will be lost on restart)');
 }
 
 // Encryption functions for access tokens
@@ -452,7 +453,7 @@ const initPromise = (async () => {
         
         serverInitialized = true;
     } catch (error) {
-        console.error('❌ Failed to initialize server:', error);
+        logger.error('Failed to initialize server', { error: error.message, stack: error.stack });
         process.exit(1);
     }
 })();
@@ -496,6 +497,26 @@ app.use(helmet({
 // Additional Permissions-Policy header for Plaid Link SDK compatibility
 app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'accelerometer=*, encrypted-media=*');
+    next();
+});
+
+// Request ID middleware for tracking
+app.use((req, res, next) => {
+    req.id = crypto.randomBytes(16).toString('hex');
+    res.setHeader('X-Request-ID', req.id);
+    next();
+});
+
+// Request logging middleware
+app.use((req, res, next) => {
+    const startTime = Date.now();
+    
+    // Log response when finished
+    res.on('finish', () => {
+        const responseTime = Date.now() - startTime;
+        logger.logRequest(req, res, responseTime);
+    });
+    
     next();
 });
 
@@ -752,7 +773,7 @@ app.post('/api/link/token/create', authenticateToken, async (req, res) => {
         const response = await plaidClient.linkTokenCreate(request);
         res.json({ link_token: response.data.link_token });
     } catch (error) {
-        console.error('Error creating link token:', error);
+        logger.logError(error, { context: 'Create Link Token', userId: req.user?.userId });
 
         const plaidError = error.response?.data || {};
         const errorMessage = plaidError.error_message || error.message;
@@ -793,7 +814,7 @@ app.post('/api/item/public_token/exchange', authenticateToken, async (req, res) 
             message: 'Access token stored securely'
         });
     } catch (error) {
-        console.error('Error exchanging public token:', error);
+        logger.logError(error, { context: 'Exchange Public Token', userId: req.user?.userId });
         res.status(500).json({
             error: 'Failed to exchange public token',
             message: error.message
@@ -827,7 +848,7 @@ app.post('/api/accounts/get', authenticateToken, async (req, res) => {
             accounts: response.data.accounts,
         });
     } catch (error) {
-        console.error('Error getting accounts:', error);
+        logger.logError(error, { context: 'Get Accounts', userId: req.user?.userId });
         res.status(500).json({
             error: 'Failed to get accounts',
             message: error.message
@@ -845,7 +866,7 @@ app.get('/api/access-tokens', authenticateToken, async (req, res) => {
             items: Object.keys(tokens).map(itemId => ({ item_id: itemId }))
         });
     } catch (error) {
-        console.error('Error getting access tokens:', error);
+        logger.logError(error, { context: 'Get Access Tokens', userId: req.user?.userId });
         res.status(500).json({ error: 'Failed to get access tokens' });
     }
 });
@@ -882,7 +903,7 @@ app.post('/api/transactions/get', authenticateToken, async (req, res) => {
             total_transactions: response.data.total_transactions,
         });
     } catch (error) {
-        console.error('Error getting transactions:', error);
+        logger.logError(error, { context: 'Get Transactions', userId: req.user?.userId });
         res.status(500).json({
             error: 'Failed to get transactions',
             message: error.message
@@ -921,7 +942,7 @@ app.post('/api/transactions/sync', authenticateToken, async (req, res) => {
             next_cursor: response.data.next_cursor,
         });
     } catch (error) {
-        console.error('Error syncing transactions:', error);
+        logger.logError(error, { context: 'Sync Transactions', userId: req.user?.userId });
         res.status(500).json({
             error: 'Failed to sync transactions',
             message: error.message
@@ -956,12 +977,34 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// Error tracking endpoint for frontend errors
+app.post('/api/errors', (req, res) => {
+    try {
+        const { error, context, userAgent, url } = req.body;
+        logger.logError(
+            new Error(error.message || error),
+            {
+                context: context || 'Frontend Error',
+                userAgent,
+                url,
+                stack: error.stack,
+                ...error
+            }
+        );
+        res.status(200).json({ success: true });
+    } catch (err) {
+        logger.logError(err, { context: 'Error Tracking Endpoint' });
+        res.status(500).json({ error: 'Failed to log error' });
+    }
+});
+
 // Global error handler middleware (must be before static files)
 app.use((err, req, res, next) => {
-    console.error('Unhandled route error:', err);
+    logger.logError(err, { context: 'Unhandled Route Error', requestId: req.id });
     res.status(500).json({
         error: 'Internal server error',
-        message: NODE_ENV === 'development' ? err.message : 'An error occurred'
+        message: NODE_ENV === 'development' ? err.message : 'An error occurred',
+        requestId: req.id
     });
 });
 
@@ -1007,12 +1050,12 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Handle server errors
 process.on('SIGTERM', () => {
-    console.log('SIGTERM received, shutting down gracefully');
+    logger.info('SIGTERM received, shutting down gracefully');
     process.exit(0);
 });
 
 process.on('SIGINT', () => {
-    console.log('SIGINT received, shutting down gracefully');
+    logger.info('SIGINT received, shutting down gracefully');
     process.exit(0);
 });
 
@@ -1022,8 +1065,8 @@ const SERVER_HOST = process.env.SERVER_HOST || (NODE_ENV === 'production' ? '0.0
 
 // Ensure initialization completes before starting server
 initPromise.then(() => {
-    if (!serverInitialized) {
-        console.error('❌ Server initialization failed');
+        if (!serverInitialized) {
+        logger.error('Server initialization failed');
         process.exit(1);
         return;
     }
@@ -1032,43 +1075,43 @@ initPromise.then(() => {
     try {
         const server = app.listen(PORT, SERVER_HOST, () => {
         if (NODE_ENV === 'development') {
-            console.log(`Server running on http://localhost:${PORT}`);
+            logger.info(`Server running on http://localhost:${PORT}`);
             if (SERVER_HOST === '127.0.0.1') {
-                console.log(`✅ Local-only mode: Server accessible only from localhost`);
+                logger.info('Local-only mode: Server accessible only from localhost');
             } else {
                 const networkInterfaces = require('os').networkInterfaces();
                 const localIP = Object.values(networkInterfaces)
                     .flat()
                     .find(i => i.family === 'IPv4' && !i.internal)?.address;
                 if (localIP) {
-                    console.log(`⚠️  Server also accessible at http://${localIP}:${PORT}`);
-                    console.log(`   Set SERVER_HOST=127.0.0.1 in .env for local-only access`);
+                    logger.warn(`Server also accessible at http://${localIP}:${PORT}`);
+                    logger.info('Set SERVER_HOST=127.0.0.1 in .env for local-only access');
                 }
             }
-            console.log(`Plaid environment: ${process.env.PLAID_ENV || 'sandbox'}`);
+            logger.info(`Plaid environment: ${process.env.PLAID_ENV || 'sandbox'}`);
         }
         // Production: minimal logging
         if (NODE_ENV === 'production') {
-            console.log(`Server started on port ${PORT}`);
+            logger.info(`Server started on port ${PORT}`);
         }
     });
 
         // Handle server errors
         server.on('error', (error) => {
             if (error.code === 'EADDRINUSE') {
-                console.error(`❌ Port ${PORT} is already in use. Please kill the process using that port or use a different port.`);
-                console.error(`   To kill existing process: lsof -ti:${PORT} | xargs kill -9`);
+                logger.error(`Port ${PORT} is already in use. Please kill the process using that port or use a different port.`);
+                logger.error(`To kill existing process: lsof -ti:${PORT} | xargs kill -9`);
                 process.exit(1);
             } else {
-                console.error('Server error:', error);
+                logger.logError(error, { context: 'Server Error' });
                 // Don't exit on other errors - let it try to recover
             }
         });
     } catch (error) {
-        console.error('Failed to start server:', error);
+        logger.logError(error, { context: 'Server Startup' });
         process.exit(1);
     }
 }).catch((error) => {
-    console.error('❌ Server initialization error:', error);
+    logger.logError(error, { context: 'Server Initialization' });
     process.exit(1);
 });

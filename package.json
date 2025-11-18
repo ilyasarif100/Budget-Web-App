@@ -21,6 +21,8 @@
     "build:analyze": "node scripts/build-analyze.js",
     "build:compress": "node scripts/build-compress.js",
     "build:check": "npm run build && npm run build:analyze",
+    "test:production": "./scripts/test-production.sh",
+    "test:health": "./scripts/test-health.sh",
     "prepare": "husky"
   },
   "keywords": [

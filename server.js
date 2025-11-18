@@ -12,11 +12,7 @@ const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
 const logger = require('./utils/logger');
 const { validateAndLog } = require('./utils/env-validator');
-const {
-  basicHealthCheck,
-  detailedHealthCheck,
-  readinessCheck,
-} = require('./utils/health-check');
+const { basicHealthCheck, detailedHealthCheck, readinessCheck } = require('./utils/health-check');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1026,12 +1022,65 @@ app.post('/api/transactions/sync', authenticateToken, async (req, res) => {
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    plaid_env: process.env.PLAID_ENV || 'sandbox',
-    auth_enabled: true,
-  });
+// Health check endpoints
+app.get('/api/health', async (req, res) => {
+  try {
+    const health = await basicHealthCheck();
+    const statusCode = health.healthy ? 200 : 503;
+    res.status(statusCode).json({
+      status: health.healthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      checks: health.checks,
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Health Check' });
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: 'Health check failed',
+    });
+  }
+});
+
+// Detailed health check endpoint
+app.get('/api/health/detailed', async (req, res) => {
+  try {
+    const health = await detailedHealthCheck();
+    const statusCode = health.healthy ? 200 : 503;
+    res.status(statusCode).json({
+      status: health.healthy ? 'healthy' : 'unhealthy',
+      timestamp: new Date().toISOString(),
+      checks: health.checks,
+      system: health.system,
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Detailed Health Check' });
+    res.status(503).json({
+      status: 'error',
+      timestamp: new Date().toISOString(),
+      error: 'Health check failed',
+    });
+  }
+});
+
+// Readiness probe (for Kubernetes/Docker)
+app.get('/api/health/ready', async (req, res) => {
+  try {
+    const readiness = await readinessCheck();
+    const statusCode = readiness.ready ? 200 : 503;
+    res.status(statusCode).json({
+      ready: readiness.ready,
+      message: readiness.message,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.logError(error, { context: 'Readiness Check' });
+    res.status(503).json({
+      ready: false,
+      message: 'Readiness check failed',
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Frontend Config Endpoint

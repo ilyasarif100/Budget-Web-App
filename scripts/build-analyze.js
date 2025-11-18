@@ -12,11 +12,11 @@ const MINIFIED_JS = path.join(DIST_DIR, 'app.min.js');
 const CSS_FILE = path.join(DIST_DIR, 'css', 'styles.css');
 
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 Bytes';
+  if (bytes === 0) {return '0 Bytes';}
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100  } ${  sizes[i]}`;
 }
 
 function analyzeFile(filePath, label) {
@@ -64,7 +64,7 @@ function analyzeBuild() {
     console.log(`  Reduction: ${((1 - file.gzipped / file.original) * 100).toFixed(1)}%`);
   });
 
-  console.log('\n' + '='.repeat(60));
+  console.log(`\n${  '='.repeat(60)}`);
   console.log('\nTotal Bundle Size:');
   console.log(`  Original:  ${formatBytes(totalOriginal)}`);
   console.log(`  Gzipped:   ${formatBytes(totalGzipped)}`);
@@ -96,4 +96,3 @@ function analyzeBuild() {
 }
 
 analyzeBuild();
-

@@ -10,11 +10,7 @@ const { gzipSync } = require('zlib');
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 
 // Files to compress
-const FILES_TO_COMPRESS = [
-  'app.min.js',
-  'css/styles.css',
-  'index.html',
-];
+const FILES_TO_COMPRESS = ['app.min.js', 'css/styles.css', 'index.html'];
 
 function compressFile(filePath) {
   const fullPath = path.join(DIST_DIR, filePath);
@@ -57,4 +53,3 @@ function compressBuild() {
 }
 
 compressBuild();
-

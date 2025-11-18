@@ -34,7 +34,9 @@ async function checkDataDirectory() {
  */
 async function checkDiskSpace(minFreeMB = 100) {
   try {
-    const stats = await fsPromises.statfs(DATA_DIR);
+    // Use fs.statfsSync (available in Node.js 20+)
+    // Note: statfs is synchronous in Node.js, so we use the sync version
+    const stats = fs.statfsSync(DATA_DIR);
     // Calculate free space (statfs.f_bavail * statfs.f_frsize)
     const freeBytes = stats.bavail * stats.bsize;
     const freeMB = freeBytes / (1024 * 1024);
@@ -53,11 +55,20 @@ async function checkDiskSpace(minFreeMB = 100) {
       freeMB: Math.round(freeMB),
     };
   } catch (error) {
-    // Fallback for systems without statfs (Windows)
-    return {
-      healthy: true,
-      message: 'Disk space check not available on this system',
-    };
+    // Fallback for systems without statfs (Windows) or if statfs fails
+    // Just check if directory is accessible
+    try {
+      await fsPromises.stat(DATA_DIR);
+      return {
+        healthy: true,
+        message: 'Disk space check not available on this system',
+      };
+    } catch (statError) {
+      return {
+        healthy: false,
+        message: `Cannot access data directory: ${statError.message}`,
+      };
+    }
   }
 }
 
@@ -110,8 +121,10 @@ async function checkPlaidConnectivity() {
     }
 
     // Check if Plaid keys are set
-    const hasClientId = process.env.PLAID_CLIENT_ID && !process.env.PLAID_CLIENT_ID.includes('your_');
-    const hasSecret = process.env.PLAID_SECRET_KEY && !process.env.PLAID_SECRET_KEY.includes('your_');
+    const hasClientId =
+      process.env.PLAID_CLIENT_ID && !process.env.PLAID_CLIENT_ID.includes('your_');
+    const hasSecret =
+      process.env.PLAID_SECRET_KEY && !process.env.PLAID_SECRET_KEY.includes('your_');
 
     if (!hasClientId || !hasSecret) {
       return {
@@ -225,4 +238,3 @@ module.exports = {
   detailedHealthCheck,
   readinessCheck,
 };
-

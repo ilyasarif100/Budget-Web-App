@@ -576,6 +576,19 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
 
 // CORS configuration - restrict to localhost for local use
 const isLocalOnly = process.env.LOCAL_ONLY === 'true' || NODE_ENV === 'development';
+
+// Health check endpoints should always be accessible (for monitoring tools)
+app.use('/api/health', (req, res, next) => {
+  // Allow health checks without origin (for curl, monitoring tools, etc.)
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -1022,7 +1035,7 @@ app.post('/api/transactions/sync', authenticateToken, async (req, res) => {
 });
 
 // Health check
-// Health check endpoints
+// Health check endpoints (defined before other routes to ensure CORS bypass works)
 app.get('/api/health', async (req, res) => {
   try {
     const health = await basicHealthCheck();

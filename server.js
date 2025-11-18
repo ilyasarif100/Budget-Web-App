@@ -516,7 +516,8 @@ app.use(
               frameAncestors: ["'none'"],
               // Only upgrade to HTTPS in production with actual SSL certificate
               // Disable for localhost/development
-              upgradeInsecureRequests: NODE_ENV === 'production' && process.env.FORCE_HTTPS === 'true' ? [] : false,
+              upgradeInsecureRequests:
+                NODE_ENV === 'production' && process.env.FORCE_HTTPS === 'true' ? [] : false,
             },
           }
         : false,
@@ -693,16 +694,22 @@ app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_SIZE }));
 // Additional security: Remove X-Powered-By header
 app.disable('x-powered-by');
 
-// HTTPS enforcement (in production)
-if (NODE_ENV === 'production') {
-  app.use((req, res, next) => {
-    if (req.header('x-forwarded-proto') !== 'https') {
-      res.redirect(`https://${req.header('host')}${req.url}`);
-    } else {
-      next();
-    }
-  });
-}
+// HTTPS enforcement (only when FORCE_HTTPS is enabled and not localhost)
+// Skip for localhost/development
+app.use((req, res, next) => {
+  // Only enforce HTTPS if explicitly enabled and not localhost
+  if (
+    NODE_ENV === 'production' &&
+    process.env.FORCE_HTTPS === 'true' &&
+    !req.get('host')?.includes('localhost') &&
+    !req.get('host')?.includes('127.0.0.1') &&
+    req.header('x-forwarded-proto') !== 'https'
+  ) {
+    res.redirect(`https://${req.header('host')}${req.url}`);
+    return;
+  }
+  next();
+});
 
 // JWT Authentication Middleware
 function authenticateToken(req, res, next) {

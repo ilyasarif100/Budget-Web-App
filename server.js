@@ -12,6 +12,11 @@ const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
 const logger = require('./utils/logger');
 const { validateAndLog } = require('./utils/env-validator');
+const {
+  basicHealthCheck,
+  detailedHealthCheck,
+  readinessCheck,
+} = require('./utils/health-check');
 
 const app = express();
 const PORT = process.env.PORT || 3000;

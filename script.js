@@ -1163,14 +1163,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   const originalError = console.error;
   const originalWarn = console.warn;
 
+  // Helper function to check if message should be suppressed
+  function shouldSuppressMessage(message) {
+    const lowerMessage = message.toLowerCase();
+    return (
+      lowerMessage.includes('runtime.lasterror') ||
+      lowerMessage.includes('message port closed') ||
+      lowerMessage.includes('message channel closed') ||
+      lowerMessage.includes('listener indicated an asynchronous response') ||
+      lowerMessage.includes('unchecked runtime.lasterror') ||
+      lowerMessage.includes('extension context invalidated') ||
+      lowerMessage.includes('receiving end does not exist')
+    );
+  }
+
   console.error = function (...args) {
     const message = args.join(' ');
-    // Filter out Plaid SDK's harmless messaging warnings (if they come through console.error)
-    if (
-      message.includes('Unchecked runtime.lastError') ||
-      message.includes('message port closed') ||
-      message.includes('runtime.lastError')
-    ) {
+    // Filter out browser extension messaging errors
+    if (shouldSuppressMessage(message)) {
       return; // Suppress these warnings
     }
     originalError.apply(console, args);
@@ -1178,24 +1188,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   console.warn = function (...args) {
     const message = args.join(' ');
-    // Filter out Plaid SDK's harmless messaging warnings (if they come through console.warn)
-    if (
-      message.includes('Unchecked runtime.lastError') ||
-      message.includes('message port closed') ||
-      message.includes('runtime.lastError')
-    ) {
+    // Filter out browser extension messaging errors
+    if (shouldSuppressMessage(message)) {
       return; // Suppress these warnings
     }
     originalWarn.apply(console, args);
   };
 
-  // Suppress unhandled promise rejections from Plaid messaging
+  // Suppress unhandled promise rejections from browser extensions
   window.addEventListener('unhandledrejection', event => {
     const message = event.reason?.message || String(event.reason || '');
-    if (message.includes('runtime.lastError') || message.includes('message port closed')) {
+    if (shouldSuppressMessage(message)) {
       event.preventDefault(); // Suppress these warnings
+      return;
     }
   });
+
+  // Also suppress errors that appear before DOMContentLoaded
+  // This catches errors from extensions that load before our suppression code
+  if (window.addEventListener) {
+    window.addEventListener('error', event => {
+      const message = event.message || String(event.error || '');
+      if (shouldSuppressMessage(message)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
+      }
+    }, true); // Use capture phase to catch early
+  }
 
   // Build accounts map for optimized lookups
   buildAccountsMap();

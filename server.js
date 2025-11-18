@@ -633,12 +633,18 @@ const corsMiddleware = cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 });
 
-// Apply CORS only to non-health-check routes
+// Apply CORS only to API routes (not static files or health checks)
 app.use((req, res, next) => {
+  // Skip CORS for health checks
   if (req.path && req.path.startsWith('/api/health')) {
-    return next(); // Skip CORS for health checks
+    return next();
   }
-  corsMiddleware(req, res, next); // Apply CORS for other routes
+  // Skip CORS for non-API routes (static files: JS, CSS, HTML, images, etc.)
+  if (!req.path.startsWith('/api/')) {
+    return next(); // Skip CORS for static files
+  }
+  // Apply CORS only for API routes
+  corsMiddleware(req, res, next);
 });
 
 // Rate limiting - general API protection

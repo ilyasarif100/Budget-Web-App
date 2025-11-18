@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  budget-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: budget-tracker
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Add your environment variables here or use .env file
+      # - PLAID_CLIENT_ID=${PLAID_CLIENT_ID}
+      # - PLAID_SECRET_KEY=${PLAID_SECRET_KEY}
+      # - PLAID_ENV=${PLAID_ENV}
+      # - JWT_SECRET=${JWT_SECRET}
+      # - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      # - AUTH_REQUIRED=${AUTH_REQUIRED}
+      # - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+    volumes:
+      # Persist data directory (encrypted tokens, user data)
+      - ./data:/app/data
+      # Persist logs
+      - ./logs:/app/logs
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://localhost:3000/api/health/ready', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    networks:
+      - budget-tracker-network
+
+networks:
+  budget-tracker-network:
+    driver: bridge
+

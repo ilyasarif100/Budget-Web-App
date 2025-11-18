@@ -1,0 +1,32 @@
+version: '3.8'
+
+# Development Docker Compose configuration
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+services:
+  budget-tracker-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: budget-tracker-dev
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      - /app/node_modules
+      # Persist data
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: npm run dev
+    networks:
+      - budget-tracker-network
+
+networks:
+  budget-tracker-network:
+    driver: bridge
+

@@ -257,6 +257,65 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 8. ✅ Enable monitoring/logging
 9. ✅ Run `npm run build` to create production bundle
 
+### Docker Deployment
+
+The application includes Docker support for easy deployment:
+
+```bash
+# Production deployment
+docker-compose up -d
+
+# Development with hot reload
+docker-compose -f docker-compose.dev.yml up
+```
+
+**Features:**
+- Multi-stage build for optimized images
+- Health checks built-in
+- Non-root user for security
+- Volume mounts for data persistence
+- Production and development configurations
+
+See [Docker Deployment Guide](./docs/DOCKER.md) for detailed instructions.
+
+### Health Checks
+
+The application includes comprehensive health check endpoints:
+
+- `GET /api/health` - Basic health check
+- `GET /api/health/detailed` - Detailed system information
+- `GET /api/health/ready` - Readiness probe (Kubernetes/Docker)
+
+These endpoints check:
+- Data directory accessibility
+- Disk space availability
+- Memory usage
+- Plaid API connectivity
+
+See [Monitoring Documentation](./docs/MONITORING.md) for details.
+
+### Build Optimization
+
+Production builds are optimized for performance:
+
+- **Bundle Size:** 33.2KB gzipped (78.6% reduction)
+- **Minification:** Terser with source maps
+- **Compression:** Gzip support
+- **Analysis:** Built-in bundle size analysis
+
+```bash
+# Build and analyze
+npm run build:check
+
+# Analyze bundle size
+npm run build:analyze
+
+# Create compressed assets
+npm run build:compress
+```
+
+See [Build Documentation](./docs/BUILD.md) for details.
+
 ---
 
 ## 📝 Development

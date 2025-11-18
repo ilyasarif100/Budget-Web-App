@@ -25,36 +25,41 @@ A modern, full-stack budgeting application with Plaid integration for automatic 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js (v14 or higher)
-- npm or yarn
+
+- Node.js (v20.19.5 or higher - see `.nvmrc`)
+- npm (v10.0.0 or higher)
 - Plaid account ([Get free API keys](https://dashboard.plaid.com))
 
 ### Installation
 
 1. **Clone the repository**
+
 ```bash
 git clone <your-repo-url>
 cd budgeting-web-app
 ```
 
 2. **Install dependencies**
+
 ```bash
 npm install
 ```
 
 3. **Configure environment variables**
+
 ```bash
 cp env.template .env
 # Edit .env and add your Plaid credentials
 ```
 
 4. **Start the server**
+
 ```bash
 npm start
 ```
 
 5. **Open the app**
-Navigate to `http://localhost:3000` in your browser
+   Navigate to `http://localhost:3000` in your browser
 
 **That's it!** The app serves both frontend and backend from the same server.
 
@@ -94,9 +99,29 @@ budgeting-web-app/
 │   ├── app.min.js         # Minified bundle
 │   └── index.html         # Production HTML
 ├── package.json           # Dependencies & scripts
-├── webpack.config.js      # Webpack bundling config
 ├── .env                   # Environment variables (not committed)
-├── env.template           # Environment template
+├── .env.example           # Environment template (safe to commit)
+├── env.template           # Legacy environment template
+├── Dockerfile             # Production Docker image
+├── Dockerfile.dev         # Development Docker image
+├── docker-compose.yml     # Production Docker Compose
+├── docker-compose.dev.yml # Development Docker Compose
+├── utils/                 # Backend utilities
+│   ├── logger.js          # Winston logger
+│   ├── env-validator.js   # Environment validation
+│   └── health-check.js     # Health check utilities
+├── scripts/               # Build and utility scripts
+│   ├── backup.js          # Data backup script
+│   ├── build-analyze.js   # Bundle analysis
+│   └── build-compress.js  # Asset compression
+├── docs/                  # Documentation
+│   ├── BUILD.md           # Build documentation
+│   ├── DOCKER.md          # Docker deployment guide
+│   ├── MONITORING.md      # Monitoring guide
+│   ├── SECURITY.md        # Security documentation
+│   └── CODE_ORGANIZATION.md # Code organization plan
+├── tests/                 # Test files
+│   └── setup.test.js      # Setup tests
 └── data/                  # Encrypted data storage (not committed)
     ├── tokens.json        # Encrypted Plaid tokens
     └── users.json         # User data
@@ -111,6 +136,7 @@ budgeting-web-app/
 All configuration is done via `.env` file. See [README-ENV.md](./README-ENV.md) for details.
 
 **Required:**
+
 - `PLAID_CLIENT_ID` - Plaid API client ID
 - `PLAID_SECRET_KEY` - Plaid API secret key
 - `PLAID_ENV` - Environment (sandbox/development/production)
@@ -118,6 +144,7 @@ All configuration is done via `.env` file. See [README-ENV.md](./README-ENV.md) 
 - `ENCRYPTION_KEY` - 64-character hex key for token encryption
 
 **Optional:**
+
 - `PORT` - Server port (default: 3000)
 - `AUTH_REQUIRED` - Enable authentication (default: false for local)
 - `NODE_ENV` - Environment (development/production)
@@ -143,17 +170,20 @@ See [SECURITY.md](./SECURITY.md) for detailed security documentation.
 ## 📚 API Endpoints
 
 ### Authentication
+
 - `POST /api/auth/register` - Register new user
 - `POST /api/auth/login` - User login
 - `GET /api/auth/verify` - Verify token
 
 ### Plaid Integration
+
 - `POST /api/link/token/create` - Create Plaid Link token
 - `POST /api/item/public_token/exchange` - Exchange public token
 - `POST /api/accounts/get` - Get accounts
 - `POST /api/transactions/sync` - Sync transactions
 
 ### Configuration
+
 - `GET /api/config` - Get public configuration
 
 All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
@@ -163,6 +193,7 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 ## 🏗️ Architecture
 
 ### Backend
+
 - **Express.js** - Web framework
 - **Plaid API** - Financial data integration
 - **JWT** - Authentication tokens
@@ -171,6 +202,7 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 - **CORS** - Cross-origin resource sharing
 
 ### Frontend
+
 - **Vanilla JavaScript** - No framework dependencies, modular architecture
 - **IndexedDB** - Client-side data storage with indexes for efficient queries
 - **Virtual Scrolling** - Smooth rendering of large transaction lists
@@ -183,6 +215,7 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 - **Memoization** - Caches expensive calculations
 
 ### Data Storage
+
 - **Backend**: Encrypted file-based storage (`data/`) for Plaid tokens and user data
 - **Frontend**: IndexedDB for transactions, accounts, and categories with indexes
 - **Secrets**: `.env` file (never committed, excluded via `.gitignore`)
@@ -229,12 +262,15 @@ All Plaid endpoints require authentication (unless `AUTH_REQUIRED=false`).
 ## 📝 Development
 
 ### Development Mode
+
 ```bash
 npm run dev
 ```
+
 Uses nodemon for auto-reload on file changes.
 
 ### Code Structure
+
 - `server.js` - Backend API and Plaid integration
 - `script.js` - Main frontend orchestrator
 - `js/` - Modular frontend modules (auth, plaid, data, UI, etc.)
@@ -243,6 +279,7 @@ Uses nodemon for auto-reload on file changes.
 - `workers/` - Web Workers for background processing
 
 ### Build Scripts
+
 - `npm start` - Start production server
 - `npm run dev` - Start development server with auto-reload
 - `npm run build` - Build production bundle (minify, copy assets)
@@ -257,15 +294,18 @@ Uses nodemon for auto-reload on file changes.
 ### Common Issues
 
 **"Failed to fetch"**
+
 - Check backend server is running (`npm start`)
 - Verify `.env` file has correct values
 - Check browser console for errors
 
 **"Authentication required"**
+
 - Set `AUTH_REQUIRED=false` for local development
 - Or create account via `/api/auth/register`
 
 **"Invalid key length"**
+
 - `ENCRYPTION_KEY` must be exactly 64 hex characters
 - Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
@@ -292,9 +332,25 @@ ISC
 ## 📞 Support
 
 For issues, questions, or contributions:
+
 - Check documentation in `/docs` folder
-- Review [SECURITY.md](./SECURITY.md) for security questions
-- See [QUICKSTART.md](./QUICKSTART.md) for setup help
+- Review [Security Documentation](./docs/SECURITY.md) for security questions
+- See [Quick Start Guide](./QUICKSTART.md) for setup help
+- See [Docker Guide](./docs/DOCKER.md) for deployment
+- See [Monitoring Guide](./docs/MONITORING.md) for health checks
+- See [Build Guide](./docs/BUILD.md) for build optimization
+
+## 📚 Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+- **[BUILD.md](./docs/BUILD.md)** - Build process and optimization
+- **[DOCKER.md](./docs/DOCKER.md)** - Docker deployment guide
+- **[MONITORING.md](./docs/MONITORING.md)** - Health checks and monitoring
+- **[SECURITY.md](./docs/SECURITY.md)** - Security features and best practices
+- **[CODE_ORGANIZATION.md](./docs/CODE_ORGANIZATION.md)** - Code organization and refactoring plan
+- **[BACKUP.md](./BACKUP.md)** - Backup and recovery procedures
+- **[SETUP.md](./SETUP.md)** - Development environment setup
 
 ---
 

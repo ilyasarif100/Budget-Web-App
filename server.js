@@ -514,12 +514,16 @@ app.use(
               baseUri: ["'self'"],
               formAction: ["'self'"],
               frameAncestors: ["'none'"],
-              upgradeInsecureRequests: [],
+              // Only upgrade to HTTPS in production with actual SSL certificate
+              // Disable for localhost/development
+              upgradeInsecureRequests: NODE_ENV === 'production' && process.env.FORCE_HTTPS === 'true' ? [] : false,
             },
           }
         : false,
     hsts:
-      NODE_ENV === 'production'
+      // Only enable HSTS in production with actual SSL certificate
+      // Disable for localhost/development
+      NODE_ENV === 'production' && process.env.FORCE_HTTPS === 'true'
         ? {
             maxAge: 31536000, // 1 year
             includeSubDomains: true,

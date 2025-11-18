@@ -577,57 +577,69 @@ app.get('/.well-known/appspecific/com.chrome.devtools.json', (req, res) => {
 // CORS configuration - restrict to localhost for local use
 const isLocalOnly = process.env.LOCAL_ONLY === 'true' || NODE_ENV === 'development';
 
-// Health check endpoints should always be accessible (for monitoring tools)
-app.use('/api/health', (req, res, next) => {
-  // Allow health checks without origin (for curl, monitoring tools, etc.)
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+// Skip CORS for health check endpoints (for monitoring tools, curl, etc.)
+app.use((req, res, next) => {
+  if (req.path && req.path.startsWith('/api/health')) {
+    // Set CORS headers for health checks
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+    // Skip CORS middleware for health checks by calling next() without going through CORS
+    return next();
   }
+  // For non-health routes, continue to CORS middleware
   next();
 });
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps or curl requests) in development
-      if (!origin && NODE_ENV === 'development') {
+// CORS middleware - only runs for non-health-check routes
+const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests) in development
+    if (!origin && NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
+    // Explicitly allow localhost origins
+    if (
+      origin &&
+      (origin.startsWith('http://localhost:') ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.startsWith('http://[::1]:'))
+    ) {
+      return callback(null, true);
+    }
+
+    // In production or if ALLOWED_ORIGINS is set, use configured origins
+    const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+    if (allowedOriginsEnv) {
+      const allowed = allowedOriginsEnv.split(',').map(o => o.trim());
+      if (allowed.includes(origin)) {
         return callback(null, true);
       }
+    }
 
-      // Explicitly allow localhost origins
-      if (
-        origin &&
-        (origin.startsWith('http://localhost:') ||
-          origin.startsWith('http://127.0.0.1:') ||
-          origin.startsWith('http://[::1]:'))
-      ) {
-        return callback(null, true);
-      }
+    // Allow all origins in development (for flexibility)
+    if (NODE_ENV === 'development' && !isLocalOnly) {
+      return callback(null, true);
+    }
 
-      // In production or if ALLOWED_ORIGINS is set, use configured origins
-      const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
-      if (allowedOriginsEnv) {
-        const allowed = allowedOriginsEnv.split(',').map(o => o.trim());
-        if (allowed.includes(origin)) {
-          return callback(null, true);
-        }
-      }
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+});
 
-      // Allow all origins in development (for flexibility)
-      if (NODE_ENV === 'development' && !isLocalOnly) {
-        return callback(null, true);
-      }
-
-      callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+// Apply CORS only to non-health-check routes
+app.use((req, res, next) => {
+  if (req.path && req.path.startsWith('/api/health')) {
+    return next(); // Skip CORS for health checks
+  }
+  corsMiddleware(req, res, next); // Apply CORS for other routes
+});
 
 // Rate limiting - general API protection
 const limiter = rateLimit({

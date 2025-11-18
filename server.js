@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { Configuration, PlaidApi, PlaidEnvironments } = require('plaid');
 const logger = require('./utils/logger');
+const { validateAndLog } = require('./utils/env-validator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1101,6 +1102,15 @@ const SERVER_HOST =
 // Ensure initialization completes before starting server
 initPromise
   .then(() => {
+    // Validate environment variables before starting server
+    if (!validateAndLog()) {
+      logger.error('Environment validation failed. Please fix the errors above.');
+      if (NODE_ENV === 'production') {
+        process.exit(1);
+      }
+      // In development, continue with warnings but log the issues
+    }
+
     if (!serverInitialized) {
       logger.error('Server initialization failed');
       process.exit(1);

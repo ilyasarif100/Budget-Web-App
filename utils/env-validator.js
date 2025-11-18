@@ -121,6 +121,7 @@ function validateEnvironment() {
           const origins = value.split(',').map(o => o.trim());
           for (const origin of origins) {
             try {
+              // eslint-disable-next-line no-undef
               new URL(origin);
             } catch {
               return `Invalid URL in ALLOWED_ORIGINS: ${origin}`;
@@ -166,21 +167,15 @@ function validateEnvironment() {
   // Production-specific checks
   if (process.env.NODE_ENV === 'production') {
     if (process.env.AUTH_REQUIRED === 'false') {
-      errors.push(
-        'AUTH_REQUIRED must be true in production environment for security'
-      );
+      errors.push('AUTH_REQUIRED must be true in production environment for security');
     }
 
     if (!process.env.ALLOWED_ORIGINS) {
-      warnings.push(
-        'ALLOWED_ORIGINS should be set in production to restrict CORS'
-      );
+      warnings.push('ALLOWED_ORIGINS should be set in production to restrict CORS');
     }
 
     if (process.env.PLAID_ENV === 'sandbox') {
-      warnings.push(
-        'PLAID_ENV is set to sandbox in production - use production keys'
-      );
+      warnings.push('PLAID_ENV is set to sandbox in production - use production keys');
     }
   }
 
@@ -239,4 +234,3 @@ module.exports = {
   validateEnvironment,
   validateAndLog,
 };
-

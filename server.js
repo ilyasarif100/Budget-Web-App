@@ -597,17 +597,17 @@ app.use((req, res, next) => {
 // CORS middleware - only runs for non-health-check routes
 const corsMiddleware = cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) in development
-    if (!origin && NODE_ENV === 'development') {
+    // Always allow requests with no origin from localhost (same-origin requests, curl, etc.)
+    // This is safe because same-origin requests don't need CORS
+    if (!origin) {
       return callback(null, true);
     }
 
-    // Explicitly allow localhost origins
+    // Explicitly allow localhost origins (always safe)
     if (
-      origin &&
-      (origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:') ||
-        origin.startsWith('http://[::1]:'))
+      origin.startsWith('http://localhost:') ||
+      origin.startsWith('http://127.0.0.1:') ||
+      origin.startsWith('http://[::1]:')
     ) {
       return callback(null, true);
     }

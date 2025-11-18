@@ -498,20 +498,29 @@ if (NODE_ENV === 'development') {
 
 app.use(
   helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.plaid.com'],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", 'data:', 'https:'],
-        connectSrc: cspConnectSrc,
-        frameSrc: ['https://cdn.plaid.com'],
-      },
-    },
+    contentSecurityPolicy:
+      NODE_ENV === 'production'
+        ? {
+            directives: {
+              defaultSrc: ["'self'"],
+              scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.plaid.com'],
+              styleSrc: ["'self'", "'unsafe-inline'"],
+              imgSrc: ["'self'", 'data:', 'https:'],
+              connectSrc: cspConnectSrc,
+              frameSrc: ['https://cdn.plaid.com'],
+              fontSrc: ["'self'", 'data:'],
+              objectSrc: ["'none'"],
+              baseUri: ["'self'"],
+              formAction: ["'self'"],
+              frameAncestors: ["'none'"],
+              upgradeInsecureRequests: [],
+            },
+          }
+        : false,
     hsts:
       NODE_ENV === 'production'
         ? {
-            maxAge: 31536000,
+            maxAge: 31536000, // 1 year
             includeSubDomains: true,
             preload: true,
           }
@@ -523,6 +532,13 @@ app.use(
       microphone: [],
       camera: [],
     },
+    // Additional security headers
+    xContentTypeOptions: true, // Prevent MIME type sniffing
+    xFrameOptions: { action: 'deny' }, // Prevent clickjacking
+    xXssProtection: true, // Enable XSS filter
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    crossOriginEmbedderPolicy: false, // Disabled for Plaid compatibility
+    crossOriginOpenerPolicy: false, // Disabled for Plaid compatibility
   })
 );
 
@@ -599,25 +615,47 @@ app.use(
   })
 );
 
-// Rate limiting
+// Rate limiting - general API protection
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false, // Disable `X-RateLimit-*` headers
 });
 
+// Stricter rate limiting for authentication endpoints
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit each IP to 5 requests per windowMs
   message: 'Too many authentication attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Stricter rate limiting for Plaid endpoints (cost protection)
+const plaidLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // limit each IP to 10 requests per minute
+  message: 'Too many Plaid API requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 app.use('/api/', limiter);
 app.use('/api/auth/', authLimiter);
+app.use('/api/link/', plaidLimiter);
+app.use('/api/accounts/', plaidLimiter);
+app.use('/api/transactions/', plaidLimiter);
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Request size limits (security: prevent DoS attacks)
+const MAX_REQUEST_SIZE = '10mb';
+app.use(express.json({ limit: MAX_REQUEST_SIZE }));
+app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_SIZE }));
+
+// Additional security: Remove X-Powered-By header
+app.disable('x-powered-by');
 
 // HTTPS enforcement (in production)
 if (NODE_ENV === 'production') {

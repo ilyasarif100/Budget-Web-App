@@ -29,6 +29,7 @@ npm run build
 ```
 
 This command:
+
 1. Minifies JavaScript with Terser
 2. Copies assets (CSS, config, service worker, etc.)
 3. Creates production HTML file
@@ -41,24 +42,31 @@ This command:
 ## Build Scripts
 
 ### `npm run build`
+
 Complete production build (minify + copy assets + create HTML)
 
 ### `npm run minify`
+
 Minify JavaScript files only
 
 ### `npm run copy-assets`
+
 Copy CSS, config, service worker, and other assets
 
 ### `npm run build-prod-html`
+
 Create production HTML file
 
 ### `npm run build:analyze`
+
 Analyze bundle size and provide recommendations
 
 ### `npm run build:compress`
+
 Create gzip compressed versions of assets
 
 ### `npm run build:check`
+
 Build and analyze in one command
 
 ---
@@ -103,6 +111,7 @@ npm run build:compress
 ```
 
 This creates `.gz` files for:
+
 - `app.min.js.gz`
 - `css/styles.css.gz`
 - `index.html.gz`
@@ -130,9 +139,11 @@ app.get('*.css.gz', (req, res, next) => {
   next();
 });
 
-app.use(express.static('dist', {
-  extensions: ['gz', 'html', 'js', 'css']
-}));
+app.use(
+  express.static('dist', {
+    extensions: ['gz', 'html', 'js', 'css'],
+  })
+);
 ```
 
 **Nginx Example:**
@@ -151,6 +162,7 @@ location ~* \.(js|css)$ {
 ### 1. Minification
 
 JavaScript is minified using Terser with:
+
 - Variable name mangling
 - Dead code elimination
 - Source map generation
@@ -158,6 +170,7 @@ JavaScript is minified using Terser with:
 ### 2. Source Maps
 
 Source maps are generated for debugging production issues:
+
 - File: `dist/app.min.js.map`
 - Not served in production (excluded from HTML)
 - Useful for error tracking services
@@ -165,6 +178,7 @@ Source maps are generated for debugging production issues:
 ### 3. Asset Organization
 
 Assets are organized in `dist/`:
+
 ```
 dist/
 ├── app.min.js          # Minified JavaScript
@@ -184,9 +198,11 @@ dist/
 ### Build Fails
 
 **Error:** "Cannot find module 'terser'"
+
 - **Solution:** Run `npm install`
 
 **Error:** "Permission denied"
+
 - **Solution:** Check file permissions on `dist/` directory
 
 ### Bundle Too Large
@@ -194,6 +210,7 @@ dist/
 If bundle size exceeds recommendations:
 
 1. **Check for unused code:**
+
    ```bash
    npm run build:analyze
    ```
@@ -213,6 +230,7 @@ If bundle size exceeds recommendations:
 ### Source Maps Not Working
 
 Source maps are generated but may not work if:
+
 - File paths are incorrect
 - Source files moved after build
 - Browser dev tools not configured
@@ -250,6 +268,7 @@ Minification is configured in `package.json`:
 ```
 
 Options:
+
 - `-c`: Compress
 - `-m`: Mangle variable names
 - `--source-map`: Generate source map
@@ -277,6 +296,7 @@ npm run build:check
 ```
 
 This ensures:
+
 - Build completes successfully
 - Bundle size is within limits
 - All assets are present
@@ -307,11 +327,13 @@ For CI/CD pipelines:
 ## Best Practices
 
 1. **Always analyze after build:**
+
    ```bash
    npm run build:analyze
    ```
 
 2. **Test production build locally:**
+
    ```bash
    npm run build
    npm start
@@ -359,4 +381,3 @@ Potential future improvements:
 - [Production Deployment Guide](./PRODUCTION.md)
 - [Performance Optimization](./OPTIMIZATION-RATING.md)
 - [Environment Configuration](./ENVIRONMENT.md)
-

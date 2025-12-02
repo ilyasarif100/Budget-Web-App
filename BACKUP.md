@@ -9,22 +9,26 @@ This document describes how to backup and restore your Budget Tracker applicatio
 **Location:** Root directory of the project
 
 **Why Critical:** Contains:
+
 - Plaid API credentials
 - JWT secret for authentication
 - Encryption key for Plaid tokens (CRITICAL - if lost, all encrypted tokens become unrecoverable)
 
 **Backup Method:**
+
 ```bash
 # Copy .env to a secure location (NOT in the project directory)
 cp .env ~/backups/budget-tracker/.env.backup-$(date +%Y%m%d)
 ```
 
-**Security Note:** 
+**Security Note:**
+
 - NEVER commit `.env` to git (already in `.gitignore`)
 - Store backups in a secure, encrypted location
 - Use a password manager to store backup locations
 
 **Recovery:**
+
 ```bash
 # Restore from backup
 cp ~/backups/budget-tracker/.env.backup-YYYYMMDD .env
@@ -35,16 +39,19 @@ cp ~/backups/budget-tracker/.env.backup-YYYYMMDD .env
 **Location:** `data/` directory in project root
 
 **Contains:**
+
 - `tokens.json` - Encrypted Plaid access tokens
 - `users.json` - User account data
 
 **Backup Method:**
+
 ```bash
 # Backup entire data directory
 cp -r data/ ~/backups/budget-tracker/data-backup-$(date +%Y%m%d)/
 ```
 
 **Recovery:**
+
 ```bash
 # Restore data directory
 cp -r ~/backups/budget-tracker/data-backup-YYYYMMDD/* data/
@@ -55,27 +62,32 @@ cp -r ~/backups/budget-tracker/data-backup-YYYYMMDD/* data/
 **Location:** Browser IndexedDB (client-side)
 
 **Contains:**
+
 - All transactions
 - All accounts
 - All categories
 - User preferences
 
 **Backup Method:**
+
 - Use the "Export All Data" button in the application UI
 - This creates a JSON file with all frontend data
 
 **Recovery:**
+
 - Use the "Import/Restore Data" button in the application UI
 - Select the exported JSON file
 
 ## Automated Backup Script
 
 Run the automated backup script:
+
 ```bash
 npm run backup
 ```
 
 This script will:
+
 1. Create a timestamped backup directory
 2. Backup `.env` file (if exists)
 3. Backup `data/` directory (if exists)
@@ -122,11 +134,13 @@ VIRTUAL_SCROLL_BUFFER=5
 If you need to recover everything:
 
 1. **Restore `.env` file:**
+
    ```bash
    cp ~/backups/budget-tracker/.env.backup-YYYYMMDD .env
    ```
 
 2. **Restore `data/` directory:**
+
    ```bash
    cp -r ~/backups/budget-tracker/data-backup-YYYYMMDD/* data/
    ```
@@ -139,6 +153,7 @@ If you need to recover everything:
 ### Partial Recovery
 
 **If only `.env` is lost:**
+
 - Restore from backup (see above)
 - If backup unavailable, you'll need to:
   - Re-enter Plaid credentials
@@ -147,10 +162,12 @@ If you need to recover everything:
   - You'll need to reconnect all Plaid accounts
 
 **If only `data/` is lost:**
+
 - Restore from backup (see above)
 - If backup unavailable, you'll need to reconnect all Plaid accounts
 
 **If only frontend data is lost:**
+
 - Use "Import/Restore Data" button
 - If no export available, you'll need to re-sync all transactions from Plaid
 
@@ -184,10 +201,11 @@ If you've lost everything and have no backups:
    - Copy `env.template` to `.env`
    - Fill in Plaid credentials from Plaid dashboard
    - Generate new security keys:
+
      ```bash
      # JWT_SECRET
      node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-     
+
      # ENCRYPTION_KEY
      node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
      ```
@@ -221,4 +239,3 @@ ls -la ~/backups/budget-tracker/data-backup-YYYYMMDD/
 - The backup script creates timestamped directories for versioning
 - Keep at least 3 recent backups (delete older ones manually)
 - Never store backups in the same location as the project (risk of deletion)
-

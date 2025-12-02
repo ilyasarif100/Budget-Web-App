@@ -270,6 +270,7 @@ docker-compose -f docker-compose.dev.yml up
 ```
 
 **Features:**
+
 - Multi-stage build for optimized images
 - Health checks built-in
 - Non-root user for security
@@ -287,6 +288,7 @@ The application includes comprehensive health check endpoints:
 - `GET /api/health/ready` - Readiness probe (Kubernetes/Docker)
 
 These endpoints check:
+
 - Data directory accessibility
 - Disk space availability
 - Memory usage

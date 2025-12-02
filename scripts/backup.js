@@ -2,11 +2,11 @@
 
 /**
  * Backup Script for Budget Tracker
- * 
+ *
  * Creates backups of critical files:
  * - .env file (environment variables)
  * - data/ directory (encrypted tokens and user data)
- * 
+ *
  * Backups are stored in ~/backups/budget-tracker/ with timestamps
  */
 
@@ -16,8 +16,10 @@ const { execSync } = require('child_process');
 
 const BACKUP_BASE_DIR = path.join(require('os').homedir(), 'backups', 'budget-tracker');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '_' + 
-                  new Date().toTimeString().split(' ')[0].replace(/:/g, '-');
+const TIMESTAMP = `${new Date().toISOString().replace(/[:.]/g, '-').split('T')[0]}_${new Date()
+  .toTimeString()
+  .split(' ')[0]
+  .replace(/:/g, '-')}`;
 
 const BACKUP_DIR = path.join(BACKUP_BASE_DIR, `backup-${TIMESTAMP}`);
 
@@ -27,7 +29,7 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   red: '\x1b[31m',
-  blue: '\x1b[34m'
+  blue: '\x1b[34m',
 };
 
 function log(message, color = 'reset') {
@@ -39,7 +41,7 @@ function ensureBackupDir() {
     fs.mkdirSync(BACKUP_BASE_DIR, { recursive: true });
     log(`Created backup base directory: ${BACKUP_BASE_DIR}`, 'blue');
   }
-  
+
   if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     log(`Created backup directory: ${BACKUP_DIR}`, 'blue');
@@ -49,12 +51,12 @@ function ensureBackupDir() {
 function backupFile(sourcePath, backupName) {
   const source = path.join(PROJECT_ROOT, sourcePath);
   const dest = path.join(BACKUP_DIR, backupName);
-  
+
   if (!fs.existsSync(source)) {
     log(`⚠️  ${sourcePath} not found, skipping...`, 'yellow');
     return false;
   }
-  
+
   try {
     fs.copyFileSync(source, dest);
     const stats = fs.statSync(source);
@@ -69,12 +71,12 @@ function backupFile(sourcePath, backupName) {
 function backupDirectory(sourcePath, backupName) {
   const source = path.join(PROJECT_ROOT, sourcePath);
   const dest = path.join(BACKUP_DIR, backupName);
-  
+
   if (!fs.existsSync(source)) {
     log(`⚠️  ${sourcePath} not found, skipping...`, 'yellow');
     return false;
   }
-  
+
   try {
     // Use cp -r for directory copying (works on Unix/Mac)
     if (process.platform !== 'win32') {
@@ -83,7 +85,7 @@ function backupDirectory(sourcePath, backupName) {
       // Windows: use xcopy or robocopy
       execSync(`xcopy "${source}" "${dest}\\*" /E /I /Y`, { stdio: 'ignore' });
     }
-    
+
     const stats = getDirSize(source);
     log(`✅ Backed up ${sourcePath}/ (${(stats / 1024).toFixed(2)} KB)`, 'green');
     return true;
@@ -116,9 +118,9 @@ function createManifest() {
   const manifest = {
     timestamp: new Date().toISOString(),
     backupLocation: BACKUP_DIR,
-    files: []
+    files: [],
   };
-  
+
   // List all files in backup directory
   try {
     const files = fs.readdirSync(BACKUP_DIR, { withFileTypes: true });
@@ -129,13 +131,13 @@ function createManifest() {
         name: file.name,
         size: stats.size,
         isDirectory: stats.isDirectory(),
-        modified: stats.mtime.toISOString()
+        modified: stats.mtime.toISOString(),
       });
     }
   } catch (error) {
     log(`⚠️  Could not create manifest: ${error.message}`, 'yellow');
   }
-  
+
   const manifestPath = path.join(BACKUP_DIR, 'manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   log(`✅ Created manifest: manifest.json`, 'green');
@@ -143,29 +145,29 @@ function createManifest() {
 
 function main() {
   log('\n📦 Starting backup process...\n', 'blue');
-  
+
   ensureBackupDir();
-  
+
   let backedUp = 0;
   let skipped = 0;
-  
+
   // Backup .env file
   if (backupFile('.env', 'env.backup')) {
     backedUp++;
   } else {
     skipped++;
   }
-  
+
   // Backup data directory
   if (backupDirectory('data', 'data')) {
     backedUp++;
   } else {
     skipped++;
   }
-  
+
   // Create manifest
   createManifest();
-  
+
   // Summary
   log('\n📊 Backup Summary:', 'blue');
   log(`   ✅ Backed up: ${backedUp} item(s)`, 'green');
@@ -173,7 +175,7 @@ function main() {
     log(`   ⚠️  Skipped: ${skipped} item(s)`, 'yellow');
   }
   log(`   📁 Location: ${BACKUP_DIR}\n`, 'blue');
-  
+
   if (backedUp > 0) {
     log('✅ Backup completed successfully!', 'green');
   } else {
@@ -183,4 +185,3 @@ function main() {
 
 // Run backup
 main();
-

@@ -116,6 +116,7 @@ frame-ancestors 'none'
 ### HTTP Strict Transport Security (HSTS)
 
 In production:
+
 - Max age: 1 year (31536000 seconds)
 - Include subdomains: Yes
 - Preload: Enabled
@@ -125,15 +126,18 @@ In production:
 ## Rate Limiting
 
 ### General API Endpoints
+
 - **Limit:** 100 requests per 15 minutes per IP
 - **Applies to:** All `/api/` routes
 
 ### Authentication Endpoints
+
 - **Limit:** 5 requests per 15 minutes per IP
 - **Applies to:** `/api/auth/` routes
 - **Purpose:** Prevent brute force attacks
 
 ### Plaid Endpoints
+
 - **Limit:** 10 requests per minute per IP
 - **Applies to:** `/api/link/`, `/api/accounts/`, `/api/transactions/`
 - **Purpose:** Prevent API abuse and cost overruns
@@ -156,6 +160,7 @@ const limiter = rateLimit({
 ### Token Encryption
 
 Plaid access tokens are encrypted using:
+
 - **Algorithm:** AES-256-CBC
 - **Key:** 32 bytes (256 bits) from `ENCRYPTION_KEY`
 - **IV:** Random 16 bytes per encryption
@@ -164,12 +169,14 @@ Plaid access tokens are encrypted using:
 ### Key Management
 
 **DO NOT:**
+
 - Commit encryption keys to git
 - Share encryption keys
 - Use weak or predictable keys
 - Store keys in code
 
 **DO:**
+
 - Generate keys using secure random number generator
 - Store keys in `.env` file (excluded from git)
 - Use different keys for each environment
@@ -215,21 +222,25 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ## Input Validation
 
 ### Email Validation
+
 - Format validation (RFC 5322 compliant)
 - Maximum length: 254 characters
 - Trimmed and normalized
 
 ### Password Validation
+
 - Length: 8-128 characters
 - Must contain letter and number
 - No other restrictions (to avoid user frustration)
 
 ### Input Sanitization
+
 - Removes null bytes (`\x00`)
 - Removes control characters (`\x00-\x1F`, `\x7F`)
 - Trims whitespace
 
 ### File Path Validation
+
 - Prevents directory traversal attacks
 - Validates against base directory
 - Rejects null bytes and absolute paths outside base
@@ -239,10 +250,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ## CORS Configuration
 
 ### Development
+
 - Allows all origins (for flexibility)
 - Allows requests with no origin
 
 ### Production
+
 - Restricted to `ALLOWED_ORIGINS` environment variable
 - Must be comma-separated list of URLs
 - Example: `https://yourdomain.com,https://www.yourdomain.com`
@@ -250,6 +263,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ### Configuration
 
 Set in `.env`:
+
 ```bash
 ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ```
@@ -268,6 +282,7 @@ ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ### Setting Permissions
 
 **Linux/Mac:**
+
 ```bash
 chmod 600 .env
 chmod 700 data/
@@ -275,6 +290,7 @@ chmod 600 data/*.json
 ```
 
 **Windows:**
+
 - Use file properties to restrict access
 - Ensure only your user account has access
 
@@ -357,6 +373,7 @@ chmod 600 data/*.json
 ### Security Contact
 
 For security issues:
+
 1. Review this documentation
 2. Check logs for details
 3. Document the issue
@@ -419,6 +436,7 @@ For security issues:
 ### Automated Testing
 
 Consider adding security tests:
+
 - Rate limiting tests
 - Authentication tests
 - Input validation tests
@@ -455,10 +473,10 @@ Consider adding security tests:
 ## Security Updates
 
 This document should be updated when:
+
 - New security features are added
 - Security vulnerabilities are discovered
 - Security best practices change
 - Compliance requirements change
 
 **Last Reviewed:** November 17, 2025
-

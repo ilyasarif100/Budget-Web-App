@@ -69,6 +69,7 @@ vim .env
 **Required values in `.env`:**
 
 1. **Plaid API Credentials** (from Plaid Dashboard):
+
    ```
    PLAID_ENV=sandbox
    PLAID_CLIENT_ID=your_actual_client_id
@@ -76,15 +77,17 @@ vim .env
    ```
 
 2. **Security Keys** (generate new ones):
+
    ```bash
    # Generate JWT_SECRET (64+ characters)
    node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-   
+
    # Generate ENCRYPTION_KEY (64 hex characters = 32 bytes)
    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    ```
-   
+
    Copy the output into `.env`:
+
    ```
    JWT_SECRET=<paste_generated_value>
    ENCRYPTION_KEY=<paste_generated_value>
@@ -208,6 +211,7 @@ budgeting-web-app/
 **Problem:** Wrong Node.js version
 
 **Solution:**
+
 ```bash
 # If using nvm
 nvm install
@@ -221,6 +225,7 @@ nvm use
 **Problem:** Dependencies not installed
 
 **Solution:**
+
 ```bash
 npm install
 ```
@@ -230,6 +235,7 @@ npm install
 **Problem:** Another process is using port 3000
 
 **Solution:**
+
 ```bash
 # Find and kill the process
 lsof -ti:3000 | xargs kill -9
@@ -243,6 +249,7 @@ PORT=3001
 **Problem:** Backend server not running
 
 **Solution:**
+
 ```bash
 # Start the server
 npm start
@@ -255,6 +262,7 @@ npm run dev
 **Problem:** Wrong API keys in `.env`
 
 **Solution:**
+
 - Verify keys in Plaid Dashboard
 - Ensure `PLAID_ENV` matches the environment (sandbox/development/production)
 - Check for typos in `.env` file
@@ -264,6 +272,7 @@ npm run dev
 **Problem:** Encryption key must be exactly 64 hex characters
 
 **Solution:**
+
 ```bash
 # Generate a new key
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -289,4 +298,3 @@ After setup is complete:
 - Check [QUICKSTART.md](./QUICKSTART.md) for quick start guide
 - Check [BACKUP.md](./BACKUP.md) for backup/recovery help
 - Review error messages in browser console and server logs
-

@@ -14,6 +14,7 @@ npm run test:production
 ```
 
 This script checks:
+
 - ✅ `.env` file exists and is configured
 - ✅ Production build exists
 - ✅ Bundle size is optimized
@@ -49,21 +50,24 @@ curl http://localhost:3000/api/health/ready
 ### Pre-Deployment Checks
 
 - [ ] **Environment Variables**
+
   ```bash
   # Check .env file exists
   test -f .env && echo "✅ .env exists" || echo "❌ .env missing"
-  
+
   # Verify no placeholder values
   grep -q "your_" .env && echo "⚠️  Contains placeholders" || echo "✅ Configured"
   ```
 
 - [ ] **Production Build**
+
   ```bash
   npm run build:check
   # Should show bundle size < 100KB gzipped
   ```
 
 - [ ] **Node.js Version**
+
   ```bash
   node -v
   # Should be v20.19.5 (see .nvmrc)
@@ -80,6 +84,7 @@ curl http://localhost:3000/api/health/ready
 ### Server Startup Test
 
 1. **Start Server**
+
    ```bash
    NODE_ENV=production npm start
    ```
@@ -106,6 +111,7 @@ curl http://localhost:3000/api/health
 ```
 
 **Expected Response:**
+
 ```json
 {
   "status": "healthy",
@@ -120,6 +126,7 @@ curl http://localhost:3000/api/health
 ```
 
 **Status Codes:**
+
 - `200` = Healthy ✅
 - `503` = Unhealthy ❌
 
@@ -130,6 +137,7 @@ curl http://localhost:3000/api/health/detailed
 ```
 
 **Expected Response:**
+
 ```json
 {
   "status": "healthy",
@@ -152,6 +160,7 @@ curl http://localhost:3000/api/health/ready
 ```
 
 **Expected Response:**
+
 ```json
 {
   "ready": true,
@@ -161,6 +170,7 @@ curl http://localhost:3000/api/health/ready
 ```
 
 **Status Codes:**
+
 - `200` = Ready ✅
 - `503` = Not Ready ❌
 
@@ -175,6 +185,7 @@ curl -I http://localhost:3000
 ```
 
 **Expected Headers:**
+
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
 - `X-XSS-Protection: 1`
@@ -194,6 +205,7 @@ done
 ```
 
 **Expected:**
+
 - First 5 requests: `401` (unauthorized, but not rate limited)
 - 6th request: `429` (too many requests) ✅
 
@@ -211,6 +223,7 @@ curl http://localhost:3000
 ```
 
 **Check:**
+
 - [ ] Page loads without errors
 - [ ] No console errors (except extension errors)
 - [ ] UI is responsive
@@ -258,6 +271,7 @@ npm run build:analyze
 ```
 
 **Targets:**
+
 - JavaScript: < 100KB gzipped ✅
 - CSS: < 50KB gzipped ✅
 - Total: < 150KB gzipped ✅
@@ -273,6 +287,7 @@ time curl -s http://localhost:3000/api/config > /dev/null
 ```
 
 **Targets:**
+
 - Health check: < 100ms
 - Config endpoint: < 50ms
 - API endpoints: < 500ms
@@ -288,6 +303,7 @@ docker build -t budget-tracker:test .
 ```
 
 **Check:**
+
 - [ ] Build completes without errors
 - [ ] Image size is reasonable
 - [ ] No security vulnerabilities (run `docker scan`)
@@ -299,6 +315,7 @@ docker-compose up -d
 ```
 
 **Check:**
+
 - [ ] Container starts successfully
 - [ ] Health check passes
 - [ ] Logs show no errors
@@ -324,6 +341,7 @@ docker-compose logs -f
 #### 1. Health Check Monitoring
 
 **Uptime Robot:**
+
 1. Create account at https://uptimerobot.com
 2. Add new monitor
 3. Type: HTTP(s)
@@ -332,6 +350,7 @@ docker-compose logs -f
 6. Alert contacts: Your email
 
 **Pingdom:**
+
 1. Create account at https://www.pingdom.com
 2. Add new check
 3. URL: `http://your-domain.com/api/health`
@@ -352,6 +371,7 @@ grep -i error logs/app.log | tail -20
 #### 3. Performance Monitoring
 
 **Optional Tools:**
+
 - New Relic
 - Datadog
 - Prometheus + Grafana
@@ -363,17 +383,20 @@ grep -i error logs/app.log | tail -20
 ### Server Won't Start
 
 1. **Check environment variables:**
+
    ```bash
    cat .env | grep -v "^#" | grep -v "^$"
    ```
 
 2. **Check port availability:**
+
    ```bash
    lsof -i :3000
    # If port is in use, change PORT in .env
    ```
 
 3. **Check logs:**
+
    ```bash
    tail -50 logs/app.log
    tail -50 logs/error.log
@@ -388,12 +411,14 @@ grep -i error logs/app.log | tail -20
 ### Health Checks Fail
 
 1. **Check data directory:**
+
    ```bash
    ls -la data/
    # Should have read/write permissions
    ```
 
 2. **Check disk space:**
+
    ```bash
    df -h
    # Should have > 100MB free
@@ -408,12 +433,14 @@ grep -i error logs/app.log | tail -20
 ### Docker Issues
 
 1. **Container won't start:**
+
    ```bash
    docker-compose logs
    # Check for errors
    ```
 
 2. **Permission errors:**
+
    ```bash
    sudo chown -R $USER:$USER data/ logs/
    chmod 700 data/
@@ -454,6 +481,7 @@ Before deploying to production:
 After deployment:
 
 1. **Verify health:**
+
    ```bash
    curl https://your-domain.com/api/health
    ```
@@ -512,4 +540,3 @@ curl http://localhost:3000/api/health
 ---
 
 **Last Updated:** November 17, 2025
-

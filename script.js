@@ -112,13 +112,16 @@ function updateAccountSubtypesForSelect(type) {
 let isSyncing = false;
 
 // Check if server is available (global function for use in other modules)
+// Returns true if server responds (even if health check shows warnings)
 async function checkServerHealth() {
   try {
     const response = await fetch(`${window.CONFIG.API_BASE_URL}/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(5000), // 5 second timeout
     });
-    return response.ok;
+    // Server is available if it responds (200 or 503 both mean server is running)
+    // 503 just means there are non-critical warnings (like high memory usage)
+    return response.status === 200 || response.status === 503;
   } catch (error) {
     // Connection errors mean server is down
     return false;
@@ -285,8 +288,18 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
           1000
         );
 
+        // Always clone the response before reading to prevent "body stream already read" errors
+        // This ensures the original response is never consumed
+        const responseClone = response.clone();
+
         if (!response.ok) {
-          const errorText = await response.text();
+          // Read error text from clone
+          let errorText = 'Unknown error';
+          try {
+            errorText = await responseClone.text();
+          } catch (readError) {
+            errorText = `HTTP ${response.status}`;
+          }
           // Only log if it's not a connection error
           if (!errorText.includes('Cannot connect to server')) {
             console.error(
@@ -296,7 +309,17 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
           break;
         }
 
-        const syncData = await response.json();
+        // Read response body from clone - this prevents "body stream already read" errors
+        let syncData;
+        try {
+          syncData = await responseClone.json();
+        } catch (jsonError) {
+          // If json() fails, log and skip this page
+          console.error(
+            `Failed to parse sync response for account ${accountId}: ${jsonError.message}`
+          );
+          break; // Skip this page, continue with next
+        }
 
         // Process added transactions
         for (const plaidTransaction of syncData.transactions) {
@@ -728,13 +751,13 @@ async function deleteAccount(id) {
   if (hasTransactions) {
     if (
       !confirm(
-        `This account has ${accountTransactions.length} transaction(s). Deleting this account will also delete all its transactions. Are you sure you want to delete "${account.name}"? This action cannot be undone.`
+        `This account has ${accountTransactions.length} transaction(s). Deleting this account will also delete all its transactions. Are you sure you want to delete "${account.name || account.institutionName || 'this account'}"? This action cannot be undone.`
       )
     ) {
       return;
     }
   } else {
-    if (!confirm(`Are you sure you want to delete "${account.name}"?`)) {
+    if (!confirm(`Are you sure you want to delete "${account.name || account.institutionName || 'this account'}"?`)) {
       return;
     }
   }
@@ -852,7 +875,8 @@ function exportToCSV() {
   const headers = ['Date', 'Merchant', 'Amount', 'Category', 'Status', 'Account'];
   const rows = filteredTransactions.map(t => {
     const account = accounts.find(a => a.id === t.accountId);
-    const accountName = account ? `${account.name} ••••${account.mask}` : 'Unknown';
+    const displayName = account?.name || account?.institutionName || `Account ${account?.mask || ''}`.trim() || 'Unknown';
+    const accountName = account ? `${displayName} ••••${account.mask}` : 'Unknown';
 
     return [t.date, t.merchant, t.amount.toFixed(2), t.category || 'Exempt', t.status, accountName];
   });
@@ -1168,12 +1192,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const lowerMessage = message.toLowerCase();
     return (
       lowerMessage.includes('runtime.lasterror') ||
+      lowerMessage.includes('runtime.last error') ||
       lowerMessage.includes('message port closed') ||
       lowerMessage.includes('message channel closed') ||
       lowerMessage.includes('listener indicated an asynchronous response') ||
       lowerMessage.includes('unchecked runtime.lasterror') ||
+      lowerMessage.includes('unchecked runtime.last error') ||
       lowerMessage.includes('extension context invalidated') ||
-      lowerMessage.includes('receiving end does not exist')
+      lowerMessage.includes('receiving end does not exist') ||
+      lowerMessage.includes('the message port closed before a response was received') ||
+      lowerMessage.includes('message port closed before') ||
+      // Also suppress errors from Plaid's CDN domain (browser extension interference)
+      (message.includes('cdn.plaid.com') && lowerMessage.includes('runtime'))
     );
   }
 
@@ -1207,14 +1237,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Also suppress errors that appear before DOMContentLoaded
   // This catches errors from extensions that load before our suppression code
   if (window.addEventListener) {
-    window.addEventListener('error', event => {
-      const message = event.message || String(event.error || '');
-      if (shouldSuppressMessage(message)) {
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-      }
-    }, true); // Use capture phase to catch early
+    window.addEventListener(
+      'error',
+      event => {
+        const message = event.message || String(event.error || '');
+        if (shouldSuppressMessage(message)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return false;
+        }
+      },
+      true
+    ); // Use capture phase to catch early
   }
 
   // Build accounts map for optimized lookups
@@ -1282,8 +1316,9 @@ function renderAccountsSummary() {
     const chip = document.createElement('div');
     chip.className = 'account-chip';
     const balanceClass = acc.balance < 0 ? 'negative' : 'positive';
+    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
     chip.innerHTML = `
-            <span class="account-chip-name">${acc.name} ••••${acc.mask}</span>
+            <span class="account-chip-name">${escapeHTML(accountName)} ••••${acc.mask}</span>
             <span class="account-chip-balance ${balanceClass}">${formatCurrency(acc.balance)}</span>
         `;
     summaryEl.appendChild(chip);
@@ -1347,8 +1382,11 @@ function renderAccountsExpanded() {
     // Get account icon based on type
     const accountIcon = getAccountIcon(acc.type, acc.subtype);
 
+    // Use fallback for account name if missing
+    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
+    
     // Escape user-generated content to prevent XSS
-    const safeAccountName = escapeHTML(acc.name);
+    const safeAccountName = escapeHTML(accountName);
     const safeAccountTypeLabel = escapeHTML(accountTypeLabel);
     const safeMask = escapeHTML(acc.mask);
 
@@ -1756,7 +1794,7 @@ function editTotalSpent() {
       label.style.cssText =
         'flex: 1; cursor: pointer; display: flex; justify-content: space-between; align-items: center;';
       label.innerHTML = `
-                <span style="font-weight: 500; color: var(--text-primary);">${acc.name} ••••${acc.mask}</span>
+                <span style="font-weight: 500; color: var(--text-primary);">${escapeHTML(acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`)} ••••${acc.mask}</span>
             `;
 
       accountItem.appendChild(checkbox);
@@ -1960,9 +1998,10 @@ function updateAccountsSummary() {
   accounts.forEach(acc => {
     const chip = document.createElement('div');
     chip.className = 'account-chip';
+    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
     const balanceClass = acc.balance < 0 ? 'negative' : 'positive';
     chip.innerHTML = `
-            <span class="account-chip-name">${acc.name} ••••${acc.mask}</span>
+            <span class="account-chip-name">${escapeHTML(accountName)} ••••${acc.mask}</span>
             <span class="account-chip-balance ${balanceClass}">${formatCurrency(acc.balance)}</span>
         `;
     summaryEl.appendChild(chip);
@@ -2230,8 +2269,10 @@ function renderTransactionRow(transaction) {
 
   // Get account info using Map (O(1) lookup)
   const account = accountsMap.get(transaction.accountId);
+  // Use account name, or fallback to account ID if name is missing
+  const accountName = account?.name || account?.institutionName || `Account ${account?.mask || ''}`.trim() || 'Unknown';
   const accountDisplay = account
-    ? `${account.name} ••••${account.mask}`
+    ? `${accountName} ••••${account.mask}`
     : `Unknown (${transaction.accountId || 'N/A'})`;
   const accountTypeBadge = account
     ? account.type === 'credit'
@@ -2474,11 +2515,19 @@ function updateTransactionCategory(transactionId, newCategory) {
       ? transactionsMap.get(transactionId)
       : transactions.find(t => t.id === transactionId);
   if (transaction) {
-    const oldCategory = transaction.category;
-    // Set to empty string if "Exempt" was selected
-    transaction.category = newCategory || '';
+    const oldCategory = transaction.category || '';
+    const newCategoryValue = newCategory || '';
+    
+    // Update the transaction category FIRST
+    transaction.category = newCategoryValue;
     transaction.updated = true;
     dirtyTransactions.add(transactionId); // Mark as changed
+
+    // CRITICAL: Rebuild maps IMMEDIATELY after category change
+    // This ensures the transaction is removed from old category map and added to new category map
+    if (typeof buildTransactionsMaps !== 'undefined') {
+      buildTransactionsMaps();
+    }
 
     // Save scroll position before re-rendering - find the scrollable container
     const tbody = document.getElementById('transactions-body');
@@ -2487,12 +2536,30 @@ function updateTransactionCategory(transactionId, newCategory) {
       ? scrollContainer.scrollTop
       : window.pageYOffset || document.documentElement.scrollTop;
 
+    // CRITICAL: Rebuild filteredTransactions with updated category
+    // This ensures category spending reflects the change immediately
+    filterTransactions();
+
+    // Invalidate cache to force recalculation
+    if (typeof invalidateCache !== 'undefined') {
+      invalidateCache(); // This will rebuild maps again (redundant but safe)
+    }
+
     saveData(); // Immediate save for category change
-    invalidateCache(); // Invalidate spending cache
-    initializeDashboard(); // This will recalculate everything from transactions
-    renderCategoriesSummary(); // Update both views
-    renderCategoriesExpanded();
-    renderTransactions();
+    
+    // Update all UI components
+    if (typeof initializeDashboard !== 'undefined') {
+      initializeDashboard(); // This will recalculate everything from transactions
+    }
+    if (typeof renderCategoriesSummary !== 'undefined') {
+      renderCategoriesSummary(); // Update both views
+    }
+    if (typeof renderCategoriesExpanded !== 'undefined') {
+      renderCategoriesExpanded();
+    }
+    if (typeof renderTransactions !== 'undefined') {
+      renderTransactions();
+    }
 
     // Restore scroll position after rendering (use requestAnimationFrame to ensure DOM is updated)
     requestAnimationFrame(() => {

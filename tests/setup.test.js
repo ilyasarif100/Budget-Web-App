@@ -1,6 +1,6 @@
 /**
  * Smoke Tests - Basic Setup Verification
- * 
+ *
  * These tests verify that the application can be loaded and basic modules work.
  * This is the foundation for all other tests.
  */
@@ -45,11 +45,11 @@ describe('Application Setup', () => {
   test('Environment configuration files exist', () => {
     const fs = require('fs');
     const path = require('path');
-    
+
     // Check that env.template exists
     const envTemplatePath = path.join(__dirname, '..', 'env.template');
     expect(fs.existsSync(envTemplatePath)).toBe(true);
-    
+
     // Check that .nvmrc exists
     const nvmrcPath = path.join(__dirname, '..', '.nvmrc');
     expect(fs.existsSync(nvmrcPath)).toBe(true);
@@ -58,14 +58,10 @@ describe('Application Setup', () => {
   test('Core utility modules can be loaded', () => {
     const fs = require('fs');
     const path = require('path');
-    
+
     // Check that key JS modules exist
-    const modules = [
-      'js/utils.js',
-      'js/validation.js',
-      'js/error-handler.js'
-    ];
-    
+    const modules = ['js/utils.js', 'js/validation.js', 'js/error-handler.js'];
+
     modules.forEach(modulePath => {
       const fullPath = path.join(__dirname, '..', modulePath);
       expect(fs.existsSync(fullPath)).toBe(true);
@@ -89,4 +85,3 @@ describe('Development Environment', () => {
     expect(typeof test).toBe('function');
   });
 });
-

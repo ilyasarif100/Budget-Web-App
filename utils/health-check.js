@@ -147,6 +147,8 @@ async function checkPlaidConnectivity() {
 
 /**
  * Perform basic health check
+ * Only critical checks (data directory, Plaid) determine health status
+ * Memory and disk space are warnings but don't fail the health check
  * @returns {Promise<{healthy: boolean, checks: Object}>}
  */
 async function basicHealthCheck() {
@@ -157,7 +159,13 @@ async function basicHealthCheck() {
     plaid: await checkPlaidConnectivity(),
   };
 
-  const allHealthy = Object.values(checks).every(check => check.healthy);
+  // Only critical checks determine health: data directory and Plaid config
+  // Memory and disk space are informational but don't fail the check
+  const criticalChecks = {
+    dataDirectory: checks.dataDirectory,
+    plaid: checks.plaid,
+  };
+  const allHealthy = Object.values(criticalChecks).every(check => check.healthy);
 
   return {
     healthy: allHealthy,

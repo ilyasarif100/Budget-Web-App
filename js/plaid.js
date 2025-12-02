@@ -152,20 +152,9 @@ async function initializePlaidLink() {
 // Handle successful Plaid connection
 async function handlePlaidSuccess(publicToken, metadata) {
   try {
-    // Check server health before proceeding - CRITICAL CHECK
-    const checkHealth =
-      window.checkServerHealth ||
-      (typeof checkServerHealth !== 'undefined' ? checkServerHealth : null);
-    if (checkHealth) {
-      const serverHealthy = await checkHealth();
-      if (!serverHealthy) {
-        throw new Error(
-          'Cannot connect to server. Please make sure the backend server is running on port 3000.'
-        );
-      }
-    }
-
-    showToast('Account connected successfully!', 'success');
+    // Try to connect to server - if it fails, we'll get a clear error from the fetch
+    // No need for separate health check that might fail due to non-critical issues
+    showToast('Connecting account...', 'info');
 
     // Exchange public token for access token (stored securely on backend)
     // NO RETRY - if server is down, fail fast with clear error
@@ -216,9 +205,16 @@ async function handlePlaidSuccess(publicToken, metadata) {
 
       if (!existingAccount) {
         // Map Plaid account to our account format (NO ACCESS TOKEN STORED)
+        // Use fallback chain for account name: name -> official_name -> institution_name -> type/subtype
+        const accountName =
+          plaidAccount.name ||
+          plaidAccount.official_name ||
+          plaidAccount.institution_name ||
+          `${plaidAccount.type.charAt(0).toUpperCase() + plaidAccount.type.slice(1)} ${plaidAccount.subtype ? plaidAccount.subtype.charAt(0).toUpperCase() + plaidAccount.subtype.slice(1) : 'Account'}`;
+
         const newAccount = {
           id: `acc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: plaidAccount.name,
+          name: accountName,
           type: plaidAccount.type,
           subtype: plaidAccount.subtype || 'other',
           mask: plaidAccount.mask || '0000',
@@ -226,6 +222,7 @@ async function handlePlaidSuccess(publicToken, metadata) {
           initialBalance: plaidAccount.balances.current || 0,
           plaidAccountId: plaidAccount.account_id,
           plaidItemId: itemId,
+          institutionName: plaidAccount.institution_name || null, // Store institution name separately
           order: accounts.length, // Set order for new account
           // NO plaidAccessToken - stored securely on backend only
         };
@@ -289,19 +286,7 @@ async function handlePlaidSuccess(publicToken, metadata) {
     // OPTIMIZATION: Sync only newly added accounts, not all accounts
     // Check server health again before syncing (server might have crashed)
     if (newlyAddedAccountIds.length > 0 && typeof syncAllTransactions !== 'undefined') {
-      const checkHealth =
-        window.checkServerHealth ||
-        (typeof checkServerHealth !== 'undefined' ? checkServerHealth : null);
-      if (checkHealth) {
-        const serverHealthy = await checkHealth();
-        if (!serverHealthy) {
-          showToast(
-            'Accounts added, but server is unavailable for syncing. Please restart the server and sync manually.',
-            'warning'
-          );
-          return; // Exit early - don't try to sync if server is down
-        }
-      }
+      // Try to sync - if server is down, syncAllTransactions will handle the error
       showToast(`Syncing ${newlyAddedAccountIds.length} new account(s)...`, 'info');
       await syncAllTransactions(newlyAddedAccountIds);
     }

@@ -47,17 +47,20 @@ docker-compose -f docker-compose.dev.yml up
 The production Dockerfile uses a multi-stage build for optimization:
 
 **Stage 1: Builder**
+
 - Installs dependencies
 - Builds production assets
 - Creates optimized bundle
 
 **Stage 2: Production**
+
 - Copies only production dependencies
 - Uses non-root user (security)
 - Includes health check
 - Minimal image size
 
 **Key Features:**
+
 - Multi-stage build (reduces final image size)
 - Non-root user (security best practice)
 - Health check built-in
@@ -66,6 +69,7 @@ The production Dockerfile uses a multi-stage build for optimization:
 ### Development Dockerfile
 
 The development Dockerfile:
+
 - Includes all dependencies (dev + production)
 - Installs nodemon for hot reload
 - Mounts source code as volume
@@ -78,6 +82,7 @@ The development Dockerfile:
 ### Production Configuration (`docker-compose.yml`)
 
 **Features:**
+
 - Production-optimized build
 - Volume mounts for data persistence
 - Health checks
@@ -85,6 +90,7 @@ The development Dockerfile:
 - Network isolation
 
 **Usage:**
+
 ```bash
 # Start services
 docker-compose up -d
@@ -102,12 +108,14 @@ docker-compose up -d --build
 ### Development Configuration (`docker-compose.dev.yml`)
 
 **Features:**
+
 - Hot reload with nodemon
 - Source code mounted as volume
 - Development dependencies included
 - Faster iteration
 
 **Usage:**
+
 ```bash
 # Start development environment
 docker-compose -f docker-compose.dev.yml up
@@ -159,6 +167,7 @@ Docker Compose will automatically load `.env` file.
 ### Passing Environment Variables
 
 **Docker Compose:**
+
 ```yaml
 environment:
   - PLAID_CLIENT_ID=${PLAID_CLIENT_ID}
@@ -166,6 +175,7 @@ environment:
 ```
 
 **Docker Run:**
+
 ```bash
 docker run -d \
   -p 3000:3000 \
@@ -182,10 +192,12 @@ docker run -d \
 ### Data Persistence
 
 The application requires persistent storage for:
+
 - `data/` - Encrypted tokens and user data
 - `logs/` - Application logs
 
 **Docker Compose (automatic):**
+
 ```yaml
 volumes:
   - ./data:/app/data
@@ -193,6 +205,7 @@ volumes:
 ```
 
 **Docker Run (manual):**
+
 ```bash
 docker run -d \
   -p 3000:3000 \
@@ -353,11 +366,13 @@ docker run -d -p 127.0.0.1:3000:3000 budget-tracker
 ### Container Won't Start
 
 1. **Check logs:**
+
    ```bash
    docker logs budget-tracker
    ```
 
 2. **Check environment variables:**
+
    ```bash
    docker exec budget-tracker env
    ```
@@ -370,6 +385,7 @@ docker run -d -p 127.0.0.1:3000:3000 budget-tracker
 ### Permission Errors
 
 1. **Fix data directory permissions:**
+
    ```bash
    sudo chown -R $USER:$USER data/ logs/
    chmod 700 data/
@@ -404,6 +420,7 @@ docker volume prune
 ### Build Fails
 
 1. **Clear build cache:**
+
    ```bash
    docker builder prune
    ```
@@ -420,6 +437,7 @@ docker volume prune
 ### Best Practices
 
 1. **Use specific image tags:**
+
    ```bash
    docker build -t budget-tracker:v1.0.0 .
    ```
@@ -430,6 +448,7 @@ docker volume prune
    - External secret managers (AWS Secrets Manager, HashiCorp Vault)
 
 3. **Enable resource limits:**
+
    ```yaml
    deploy:
      resources:
@@ -446,10 +465,10 @@ docker volume prune
 5. **Enable logging:**
    ```yaml
    logging:
-     driver: "json-file"
+     driver: 'json-file'
      options:
-       max-size: "10m"
-       max-file: "3"
+       max-size: '10m'
+       max-file: '3'
    ```
 
 ### Example Production Setup
@@ -462,11 +481,11 @@ services:
     image: budget-tracker:v1.0.0
     restart: always
     ports:
-      - '127.0.0.1:3000:3000'  # Only localhost
+      - '127.0.0.1:3000:3000' # Only localhost
     environment:
       - NODE_ENV=production
     volumes:
-      - ./data:/app/data:ro  # Read-only if possible
+      - ./data:/app/data:ro # Read-only if possible
       - ./logs:/app/logs
     deploy:
       resources:
@@ -474,12 +493,18 @@ services:
           cpus: '1'
           memory: 512M
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
     healthcheck:
-      test: ['CMD', 'node', '-e', "require('http').get('http://localhost:3000/api/health/ready', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://localhost:3000/api/health/ready', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })",
+        ]
       interval: 30s
       timeout: 3s
       retries: 3
@@ -504,10 +529,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Build Docker image
         run: docker build -t budget-tracker:${{ github.ref_name }} .
-      
+
       - name: Push to registry
         run: |
           echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
@@ -524,6 +549,7 @@ jobs:
    - `node:20.19.5-alpine` (official, maintained)
 
 2. **Keep images updated:**
+
    ```bash
    docker pull node:20.19.5-alpine
    docker build --pull -t budget-tracker .
@@ -540,11 +566,13 @@ jobs:
    - Already configured in Dockerfile
 
 2. **Limit capabilities:**
+
    ```bash
    docker run --cap-drop=ALL --cap-add=NET_BIND_SERVICE ...
    ```
 
 3. **Use read-only filesystem:**
+
    ```bash
    docker run --read-only --tmpfs /tmp ...
    ```
@@ -656,4 +684,3 @@ curl http://localhost:3000/api/health
 5. Configure monitoring and alerting
 6. Set up automated backups
 7. Review security settings
-

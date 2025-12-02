@@ -11,12 +11,14 @@
 `script.js` is a 3,915-line monolithic file containing all frontend application logic. While the codebase already has good modularization in the `js/` directory, `script.js` remains the largest file and contains multiple feature domains that could be better organized.
 
 **Current State:**
+
 - 3,915 lines of code
 - Mix of UI logic, business logic, event handlers, and initialization
 - Heavy reliance on global variables
 - Functions are well-organized by comments but not by modules
 
 **Target State:**
+
 - Feature-based modules in `js/` directory
 - Clear separation of concerns
 - Reduced global state
@@ -27,7 +29,9 @@
 ## Feature Boundaries Analysis
 
 ### 1. **Transaction Management** (~800 lines)
+
 **Functions:**
+
 - `addTransaction()`
 - `editTransaction()`
 - `deleteTransaction()`
@@ -38,6 +42,7 @@
 - Transaction-related event handlers
 
 **Dependencies:**
+
 - `transactions` array (global)
 - `filteredTransactions` array (global)
 - `transactionsMap`, `transactionsByAccountMap`, etc. (from `js/data.js`)
@@ -49,7 +54,9 @@
 ---
 
 ### 2. **Account Management** (~600 lines)
+
 **Functions:**
+
 - `addAccount()`
 - `editAccount()`
 - `deleteAccount()`
@@ -59,6 +66,7 @@
 - Account-related event handlers
 
 **Dependencies:**
+
 - `accounts` array (global)
 - `accountsMap` (from `js/data.js`)
 - `transactions` array (for balance calculation)
@@ -69,7 +77,9 @@
 ---
 
 ### 3. **Category Management** (~500 lines)
+
 **Functions:**
+
 - `addCategory()`
 - `editCategory()`
 - `deleteCategory()`
@@ -79,6 +89,7 @@
 - Category-related event handlers
 
 **Dependencies:**
+
 - `categories` array (global)
 - `transactions` array (for spending calculations)
 - `filteredTransactions` array
@@ -89,7 +100,9 @@
 ---
 
 ### 4. **Dashboard/Summary** (~400 lines)
+
 **Functions:**
+
 - `initializeDashboard()`
 - `updateTotalBalance()`
 - `updateTotalSpent()`
@@ -98,6 +111,7 @@
 - `updateCurrentMonth()`
 
 **Dependencies:**
+
 - `accounts`, `transactions`, `categories` arrays
 - `filteredTransactions` array
 - Various calculation functions
@@ -107,7 +121,9 @@
 ---
 
 ### 5. **Filtering & UI Controls** (~300 lines)
+
 **Functions:**
+
 - `filterTransactions()` (already partially in `js/ui-filters.js`)
 - `populateCategoryFilters()`
 - `populateAccountFilters()`
@@ -115,6 +131,7 @@
 - Filter-related event handlers
 
 **Dependencies:**
+
 - `transactions`, `accounts`, `categories` arrays
 - `filteredTransactions` array
 - UI elements
@@ -124,7 +141,9 @@
 ---
 
 ### 6. **Initialization & Setup** (~200 lines)
+
 **Functions:**
+
 - `initializeDefaultData()`
 - `initializeTheme()`
 - `initializeIncludedAccounts()`
@@ -133,6 +152,7 @@
 - DOMContentLoaded handler
 
 **Dependencies:**
+
 - All other modules
 - Global state initialization
 
@@ -141,7 +161,9 @@
 ---
 
 ### 7. **Utility Functions** (~200 lines)
+
 **Functions:**
+
 - `formatCurrency()`
 - `formatDate()`
 - `escapeHTML()`
@@ -152,6 +174,7 @@
 - `formatTimeAgo()`
 
 **Dependencies:**
+
 - Minimal (mostly pure functions)
 
 **Extraction Priority:** High (already partially in `js/utils.js`, can consolidate)
@@ -159,7 +182,9 @@
 ---
 
 ### 8. **Plaid Sync** (~300 lines)
+
 **Functions:**
+
 - `syncAllTransactions()`
 - `syncAccountTransactions()`
 - `updateSyncButtonStatus()`
@@ -169,6 +194,7 @@
 - `saveAccountSyncTime()`
 
 **Dependencies:**
+
 - `js/plaid.js` (Plaid Link)
 - `js/auth.js` (authenticated requests)
 - `transactions`, `accounts` arrays
@@ -179,13 +205,16 @@
 ---
 
 ### 9. **Validation** (~150 lines)
+
 **Functions:**
+
 - Transaction validation
 - Account validation
 - Category validation
 - Date validation
 
 **Dependencies:**
+
 - `js/validation.js` (already exists)
 - Can consolidate here
 
@@ -194,13 +223,16 @@
 ---
 
 ### 10. **Theme & UI Helpers** (~100 lines)
+
 **Functions:**
+
 - `toggleTheme()`
 - `setLoading()`
 - `showToast()`
 - Various UI helper functions
 
 **Dependencies:**
+
 - Minimal (UI only)
 
 **Extraction Priority:** Low (already in `js/ui-helpers.js`)
@@ -210,6 +242,7 @@
 ## Global State Analysis
 
 ### Global Variables (Current)
+
 ```javascript
 // Data arrays
 let transactions = [];
@@ -229,6 +262,7 @@ const accountSubtypes = { ... };
 ```
 
 ### Global State Plan
+
 1. **Keep in `script.js` (orchestrator):**
    - Initialization state
    - UI state (editing IDs, modals)
@@ -281,6 +315,7 @@ Proposed new modules:
 ## Migration Strategy
 
 ### Phase 1: Low-Risk Extractions (Week 1)
+
 **Goal:** Extract pure utility functions with no dependencies
 
 1. **Extract utility functions to `js/utils.js`**
@@ -299,6 +334,7 @@ Proposed new modules:
 ---
 
 ### Phase 2: Transaction Module (Week 2)
+
 **Goal:** Extract transaction management to `js/transactions.js`
 
 1. **Create `js/transactions.js`**
@@ -318,6 +354,7 @@ Proposed new modules:
 ---
 
 ### Phase 3: Account Module (Week 3)
+
 **Goal:** Extract account management to `js/accounts.js`
 
 1. **Create `js/accounts.js`**
@@ -336,6 +373,7 @@ Proposed new modules:
 ---
 
 ### Phase 4: Category Module (Week 4)
+
 **Goal:** Extract category management to `js/categories.js`
 
 1. **Create `js/categories.js`**
@@ -354,6 +392,7 @@ Proposed new modules:
 ---
 
 ### Phase 5: Dashboard Module (Week 5)
+
 **Goal:** Extract dashboard/summary to `js/dashboard.js`
 
 1. **Create `js/dashboard.js`**
@@ -371,6 +410,7 @@ Proposed new modules:
 ---
 
 ### Phase 6: Cleanup (Week 6)
+
 **Goal:** Final cleanup and optimization
 
 1. **Review `script.js`**
@@ -419,16 +459,19 @@ Proposed new modules:
 ## Risk Assessment
 
 ### Low Risk
+
 - Utility function extraction (Phase 1)
 - Pure functions with no side effects
 
 ### Medium Risk
+
 - Transaction module (Phase 2)
 - Account module (Phase 3)
 - Category module (Phase 4)
 - **Mitigation:** Extract incrementally, test after each function
 
 ### High Risk
+
 - Dashboard module (Phase 5)
 - **Mitigation:** Extract last, after other modules are stable
 
@@ -466,4 +509,3 @@ Proposed new modules:
 **Estimated Total Time:** 6 weeks (1 week per phase)
 
 **Priority:** Medium (code quality improvement, not critical for functionality)
-

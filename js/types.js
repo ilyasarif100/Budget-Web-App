@@ -85,4 +85,3 @@
  * @property {number} [updated] - Number of transactions updated
  * @property {string} [error] - Error message (if unsuccessful)
  */
-

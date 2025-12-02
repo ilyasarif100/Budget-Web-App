@@ -3,6 +3,7 @@
 ## 🚀 Quick Setup (5 Minutes)
 
 ### Prerequisites
+
 - Node.js (v14 or higher)
 - npm or yarn
 - Plaid account with API keys ([Plaid Dashboard](https://dashboard.plaid.com))
@@ -10,6 +11,7 @@
   - **API Calls**: Unlimited (no per-call fees)
 
 ### Step 1: Install Dependencies
+
 ```bash
 npm install
 ```
@@ -17,11 +19,13 @@ npm install
 ### Step 2: Configure Environment Variables
 
 Copy `env.template` to `.env`:
+
 ```bash
 cp env.template .env
 ```
 
 Edit `.env` and add your Plaid credentials:
+
 ```env
 PLAID_ENV=sandbox
 PLAID_CLIENT_ID=your_client_id_here
@@ -34,6 +38,7 @@ AUTH_REQUIRED=false
 ```
 
 **Generate secure keys:**
+
 ```bash
 # Generate JWT_SECRET (64+ characters)
 node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
@@ -55,6 +60,7 @@ The server will start on `http://localhost:3000`
 ### Step 4: Open the App
 
 Open your browser and navigate to:
+
 ```
 http://localhost:3000
 ```
@@ -88,6 +94,7 @@ The frontend is automatically served from the same server - no separate frontend
 ## ✅ Verification
 
 **Check if server is running:**
+
 ```bash
 curl http://localhost:3000/api/config
 ```
@@ -99,6 +106,7 @@ Should return configuration JSON with Plaid environment info.
 ## 🔧 Development Mode
 
 For development with auto-reload:
+
 ```bash
 npm run dev
 ```
@@ -110,25 +118,30 @@ npm run dev
 ## 🐛 Troubleshooting
 
 ### "Failed to fetch" or Connection Errors
+
 - ✅ Backend server running? (`npm start`)
 - ✅ Check `.env` file exists and has correct values
 - ✅ Verify Plaid credentials are correct
 - ✅ Check browser console for specific errors
 
 ### "Plaid SDK not loaded"
+
 - ✅ Check internet connection
 - ✅ Verify Plaid script loads in browser console
 - ✅ Check browser isn't blocking scripts
 
 ### "Authentication required"
+
 - ✅ Set `AUTH_REQUIRED=false` in `.env` for local development
 - ✅ Or create an account via `/api/auth/register`
 
 ### "Invalid key length"
+
 - ✅ `ENCRYPTION_KEY` must be exactly 64 hex characters
 - ✅ Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
 ### CORS Errors
+
 - ✅ Backend should be running on `http://localhost:3000`
 - ✅ Frontend accessed via `http://localhost:3000` (not `file://`)
 - ✅ Check `config.js` is detecting backend correctly

@@ -76,53 +76,59 @@ function buildTransactionsMaps() {
   });
 }
 
+// Cache version counter - increments when cache is invalidated
+// This ensures memoization cache key changes, forcing recalculation
+let categorySpendingCacheVersion = 0;
+
 // Invalidate cache when data changes
 function invalidateCache() {
   cacheInvalidated = true;
   categorySpendingCache = null;
+  // Increment cache version to invalidate memoization cache
+  categorySpendingCacheVersion++;
   // Rebuild transaction maps when data changes
   buildTransactionsMaps();
 }
 
 // Get category spending (cached and memoized for performance)
+// IMPORTANT: Always use filteredTransactions to respect date/month filters
+// This ensures category spending is calculated only for the selected time period
+// CRITICAL FIX: Memoization cache key includes cacheVersion to force recalculation when invalidated
 const getCategorySpendingMemoized =
   typeof memoize !== 'undefined'
     ? memoize(
-        () => {
-          if (categorySpendingCache && !cacheInvalidated) {
-            return categorySpendingCache;
-          }
-
+        (cacheVersion) => {
           // Calculate category spending - only count expenses (positive amounts), not income
-          // Use Map for O(1) category lookups if available
+          // ALWAYS use filteredTransactions to respect date/month filters (month-to-month tracking)
           const spending = {};
-          const transactionsToProcess =
-            typeof transactionsByCategoryMap !== 'undefined' && transactionsByCategoryMap
-              ? Array.from(transactionsByCategoryMap.entries()).flatMap(([category, txs]) =>
-                  txs
-                    .filter(t => t.status !== 'removed' && t.amount > 0)
-                    .map(t => ({ category, amount: t.amount }))
-                )
-              : filteredTransactions.filter(
-                  t => t.status !== 'removed' && t.category && t.amount > 0
-                );
+          
+          // Use filteredTransactions which already respects the date filter
+          // This ensures we only count spending for the selected month/period
+          const transactionsToProcess = filteredTransactions.filter(
+            t => t.status !== 'removed' && t.category && t.amount > 0
+          );
 
           transactionsToProcess.forEach(t => {
-            const category = t.category || t.category;
-            spending[category] = (spending[category] || 0) + (t.amount || t.amount);
+            const category = t.category;
+            spending[category] = (spending[category] || 0) + t.amount;
           });
 
           categorySpendingCache = spending;
           cacheInvalidated = false;
           return spending;
         },
-        { maxAge: 5000 }
+        { 
+          maxAge: 5000,
+          // Include cacheVersion in key - when version changes, cache misses and recalculates
+          keyGenerator: (cacheVersion) => `categorySpending_v${cacheVersion}`
+        }
       ) // Cache for 5 seconds
     : function () {
         if (categorySpendingCache && !cacheInvalidated) {
           return categorySpendingCache;
         }
 
+        // ALWAYS use filteredTransactions to respect date/month filters
         const spending = {};
         filteredTransactions
           .filter(t => t.status !== 'removed' && t.category && t.amount > 0)
@@ -136,7 +142,9 @@ const getCategorySpendingMemoized =
       };
 
 function getCategorySpending() {
-  return getCategorySpendingMemoized();
+  // Pass cacheVersion as argument - when version changes, memoization cache misses
+  // This ensures fresh calculation when cache is invalidated
+  return getCategorySpendingMemoized(categorySpendingCacheVersion);
 }
 
 // Regular saveData (optimized - only saves changed items)
@@ -282,7 +290,9 @@ async function loadData() {
     // Load accounts
     const savedAccounts = await getAllFromStore(STORES.ACCOUNTS);
     if (savedAccounts.length > 0) {
-      accounts = savedAccounts;
+      // Clear existing accounts and add loaded ones (use .length = 0 for const arrays)
+      accounts.length = 0;
+      accounts.push(...savedAccounts);
       // Ensure all accounts have initialBalance and order for backward compatibility
       accounts.forEach((acc, index) => {
         if (acc.initialBalance === undefined) {
@@ -302,7 +312,9 @@ async function loadData() {
     // Load categories
     const savedCategories = await getAllFromStore(STORES.CATEGORIES);
     if (savedCategories.length > 0) {
-      categories = savedCategories;
+      // Clear existing categories and add loaded ones (use .length = 0 for const arrays)
+      categories.length = 0;
+      categories.push(...savedCategories);
     }
 
     // Restore Plaid item IDs from accounts (NO access tokens stored)
@@ -319,7 +331,9 @@ async function loadData() {
 
     // Don't initialize filteredTransactions here - let filterTransactions() handle it
     // filteredTransactions will be set by filterTransactions() when it's called
-    filteredTransactions = [];
+    if (typeof filteredTransactions !== 'undefined') {
+      filteredTransactions.length = 0;
+    }
   } catch (error) {
     if (typeof showToast !== 'undefined') {
       showToast(`Error loading data: ${error.message}`, 'error');
@@ -425,11 +439,21 @@ async function clearAllData() {
     // Reinitialize IndexedDB
     await initDB();
 
-    // Clear arrays in memory
-    transactions = [];
-    accounts = [];
-    categories = [];
-    filteredTransactions = [];
+    // Clear arrays in memory (use .length = 0 to work with const arrays)
+    transactions.length = 0;
+    accounts.length = 0;
+    categories.length = 0;
+    if (typeof filteredTransactions !== 'undefined') {
+      filteredTransactions.length = 0;
+    }
+
+    // Clear Maps (performance optimization structures)
+    accountsMap.clear();
+    transactionsMap.clear();
+    transactionsByAccountMap.clear();
+    transactionsByPlaidIdMap.clear();
+    transactionsByCategoryMap.clear();
+    transactionsByDateMap.clear();
 
     // Clear Plaid data
     if (typeof plaidItemIds !== 'undefined') {

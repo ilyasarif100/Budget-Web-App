@@ -412,6 +412,7 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
 
           if (existingTransaction) {
             existingTransaction.status = 'removed';
+            existingTransaction.removedBy = 'system'; // Mark as system-removed
             dirtyTransactions.add(existingTransaction.id); // Mark as changed
             accountRemoved++;
           }
@@ -657,7 +658,7 @@ function showDeleteTransactionModal(id) {
   modal.classList.add('active');
 }
 
-// Confirm Delete Transaction
+// Confirm Delete Transaction - Mark as removed instead of deleting
 async function confirmDeleteTransaction() {
   if (!deletingTransactionId) {
     return;
@@ -666,20 +667,28 @@ async function confirmDeleteTransaction() {
   const id = deletingTransactionId;
   deletingTransactionId = null;
 
-  const index = transactions.findIndex(t => t.id === id);
-  if (index !== -1) {
-    const transaction = transactions[index];
-    transactions.splice(index, 1);
+  // O(1) lookup using Map instead of O(n) find
+  const transaction =
+    typeof transactionsMap !== 'undefined' && transactionsMap
+      ? transactionsMap.get(id)
+      : transactions.find(t => t.id === id);
 
-    // Delete from IndexedDB
-    await deleteFromStore(STORES.TRANSACTIONS, id);
+  if (transaction) {
+    // Mark as removed by user instead of deleting
+    transaction.status = 'removed';
+    transaction.removedBy = 'user';
+    transaction.updated = true;
+    dirtyTransactions.add(id); // Mark as changed
 
-    saveData(); // Immediate save for deletion
+    // Save to IndexedDB (transaction still exists, just marked as removed)
+    if (typeof saveData !== 'undefined') {
+      saveData();
+    }
     invalidateCache();
     buildAccountsMap(); // Rebuild in case account changed
     calculateAccountBalances();
     filterTransactions();
-    showToast('Transaction deleted successfully', 'success');
+    showToast('Transaction removed successfully', 'success');
   }
 
   // Close modal
@@ -2539,8 +2548,14 @@ function renderTransactionRow(transaction) {
                 <span class="transaction-account-badge">${safeAccountTypeBadge}</span>
             </div>
         </td>
-        <td class="notes-cell">
-            ${transaction.notes ? `<span class="notes-indicator" title="${safeNotes}">📝</span>` : ''}
+        <td class="notes-cell" data-transaction-id="${transaction.id}">
+            ${transaction.notes ? `
+                <div class="notes-preview" title="${safeNotes}">
+                    <span class="notes-icon">📝</span>
+                    <span class="notes-text">${safeNotes.length > 30 ? safeNotes.substring(0, 30) + '...' : safeNotes}</span>
+                </div>
+            ` : '<div class="notes-preview" title="Click to add notes"></div>'}
+            <input type="text" class="notes-input" value="${safeNotes}" style="display: none;" data-transaction-id="${transaction.id}">
         </td>
         <td class="actions-cell">
             <button class="action-btn edit-btn" data-id="${transaction.id}" aria-label="Edit transaction" title="Edit">
@@ -3100,7 +3115,30 @@ function filterTransactions() {
       !categoryFilter ||
       t.category === categoryFilter ||
       (!t.category && categoryFilter === 'exempt');
-    const statusMatch = !statusFilter || t.status === statusFilter;
+    
+    // Handle removed transaction filters
+    // Backward compatibility: transactions without removedBy are treated as system-removed
+    const isSystemRemoved = t.status === 'removed' && (t.removedBy === 'system' || !t.removedBy);
+    const isUserRemoved = t.status === 'removed' && t.removedBy === 'user';
+    
+    let statusMatch = true;
+    if (statusFilter) {
+      if (statusFilter === 'removed-system') {
+        statusMatch = isSystemRemoved;
+      } else if (statusFilter === 'removed-user') {
+        statusMatch = isUserRemoved;
+      } else if (statusFilter === 'removed-all') {
+        statusMatch = t.status === 'removed';
+      } else {
+        statusMatch = t.status === statusFilter;
+      }
+    } else {
+      // No status filter - exclude system-removed transactions by default
+      if (isSystemRemoved) {
+        return false;
+      }
+    }
+    
     const accountMatch = !accountFilter || t.accountId === accountFilter;
 
     // Date filter - STRICT month boundaries
@@ -3482,7 +3520,25 @@ function setupEventListeners() {
       }
     });
 
+    // Inline notes editing - click to edit
     transactionsTable.addEventListener('click', e => {
+      const notesCell = e.target.closest('.notes-cell');
+      const notesPreview = e.target.closest('.notes-preview');
+      if (notesCell && notesPreview && !e.target.classList.contains('notes-input')) {
+        const transactionId = parseInt(notesCell.dataset.transactionId);
+        const notesInput = notesCell.querySelector('.notes-input');
+        const preview = notesCell.querySelector('.notes-preview');
+        
+        if (notesInput && preview) {
+          // Hide preview, show input
+          preview.style.display = 'none';
+          notesInput.style.display = 'block';
+          notesInput.focus();
+          notesInput.select();
+        }
+        return;
+      }
+
       const editBtn = e.target.closest('.edit-btn');
       if (editBtn) {
         const id = parseInt(editBtn.dataset.id);
@@ -3494,6 +3550,64 @@ function setupEventListeners() {
       if (deleteBtn) {
         const id = parseInt(deleteBtn.dataset.id);
         deleteTransaction(id);
+      }
+    });
+
+    // Handle notes input blur to save
+    transactionsTable.addEventListener('blur', e => {
+      if (e.target.classList.contains('notes-input')) {
+        const notesInput = e.target;
+        const transactionId = parseInt(notesInput.dataset.transactionId);
+        const notesCell = notesInput.closest('.notes-cell');
+        const preview = notesCell.querySelector('.notes-preview');
+        const notesText = notesCell.querySelector('.notes-text');
+        const notesIcon = notesCell.querySelector('.notes-icon');
+        
+        const newNotes = notesInput.value.trim();
+        
+        // Update transaction
+        const transaction = (typeof transactionsMap !== 'undefined' && transactionsMap.has(transactionId))
+          ? transactionsMap.get(transactionId)
+          : transactions.find(t => t.id === transactionId);
+        if (transaction) {
+          transaction.notes = newNotes;
+          transaction.updated = true;
+          if (typeof dirtyTransactions !== 'undefined') {
+            dirtyTransactions.add(transactionId);
+          }
+          
+          // Save to IndexedDB
+          if (typeof saveData !== 'undefined') {
+            saveData();
+          }
+        }
+        
+        // Update preview
+        const safeNotes = escapeHTML(newNotes);
+        if (newNotes) {
+          // Show notes with icon and text
+          preview.innerHTML = `
+            <span class="notes-icon">📝</span>
+            <span class="notes-text">${newNotes.length > 30 ? newNotes.substring(0, 30) + '...' : newNotes}</span>
+          `;
+          preview.title = safeNotes;
+        } else {
+          // Clear preview - empty cell
+          preview.innerHTML = '';
+          preview.title = 'Click to add notes';
+        }
+        
+        // Hide input, show preview
+        notesInput.style.display = 'none';
+        preview.style.display = 'flex';
+      }
+    }, true);
+
+    // Handle Enter key to save notes
+    transactionsTable.addEventListener('keydown', e => {
+      if (e.target.classList.contains('notes-input') && e.key === 'Enter') {
+        e.preventDefault();
+        e.target.blur();
       }
     });
   }
@@ -3633,6 +3747,62 @@ function setupEventListeners() {
         showToast(error.message || 'Failed to initialize Plaid connection', 'error');
       }
     }
+
+    // Handle notes input blur and Enter key
+    transactionsTable.addEventListener('blur', e => {
+      if (e.target.classList.contains('notes-input')) {
+        const notesInput = e.target;
+        const transactionId = parseInt(notesInput.dataset.transactionId);
+        const notesCell = notesInput.closest('.notes-cell');
+        const preview = notesCell.querySelector('.notes-preview');
+        const notesText = notesCell.querySelector('.notes-text');
+        const notesIcon = notesCell.querySelector('.notes-icon');
+        
+        const newNotes = notesInput.value.trim();
+        
+        // Update transaction
+        const transaction = transactionsMap.get(transactionId) || transactions.find(t => t.id === transactionId);
+        if (transaction) {
+          transaction.notes = newNotes;
+          transaction.updated = true;
+          if (typeof dirtyTransactions !== 'undefined') {
+            dirtyTransactions.add(transactionId);
+          }
+          
+          // Save to IndexedDB
+          if (typeof saveData !== 'undefined') {
+            saveData();
+          }
+        }
+        
+        // Update preview
+        const safeNotes = escapeHTML(newNotes);
+        if (newNotes) {
+          // Show notes with icon and text
+          preview.innerHTML = `
+            <span class="notes-icon">📝</span>
+            <span class="notes-text">${newNotes.length > 30 ? newNotes.substring(0, 30) + '...' : newNotes}</span>
+          `;
+          preview.title = safeNotes;
+        } else {
+          // Clear preview - empty cell
+          preview.innerHTML = '';
+          preview.title = 'Click to add notes';
+        }
+        
+        // Hide input, show preview
+        notesInput.style.display = 'none';
+        preview.style.display = 'flex';
+      }
+    }, true);
+
+    // Handle Enter key to save notes
+    transactionsTable.addEventListener('keydown', e => {
+      if (e.target.classList.contains('notes-input') && e.key === 'Enter') {
+        e.preventDefault();
+        e.target.blur();
+      }
+    });
   });
 
   // Manual Entry button

@@ -2549,12 +2549,16 @@ function renderTransactionRow(transaction) {
             </div>
         </td>
         <td class="notes-cell" data-transaction-id="${transaction.id}">
-            ${transaction.notes ? `
+            ${
+              transaction.notes
+                ? `
                 <div class="notes-preview" title="${safeNotes}">
                     <span class="notes-icon">📝</span>
                     <span class="notes-text">${safeNotes.length > 30 ? safeNotes.substring(0, 30) + '...' : safeNotes}</span>
                 </div>
-            ` : '<div class="notes-preview" title="Click to add notes"></div>'}
+            `
+                : '<div class="notes-preview" title="Click to add notes"></div>'
+            }
             <input type="text" class="notes-input" value="${safeNotes}" style="display: none;" data-transaction-id="${transaction.id}">
         </td>
         <td class="actions-cell">
@@ -3115,12 +3119,12 @@ function filterTransactions() {
       !categoryFilter ||
       t.category === categoryFilter ||
       (!t.category && categoryFilter === 'exempt');
-    
+
     // Handle removed transaction filters
     // Backward compatibility: transactions without removedBy are treated as system-removed
     const isSystemRemoved = t.status === 'removed' && (t.removedBy === 'system' || !t.removedBy);
     const isUserRemoved = t.status === 'removed' && t.removedBy === 'user';
-    
+
     let statusMatch = true;
     if (statusFilter) {
       if (statusFilter === 'removed-system') {
@@ -3138,7 +3142,7 @@ function filterTransactions() {
         return false;
       }
     }
-    
+
     const accountMatch = !accountFilter || t.accountId === accountFilter;
 
     // Date filter - STRICT month boundaries
@@ -3528,7 +3532,7 @@ function setupEventListeners() {
         const transactionId = parseInt(notesCell.dataset.transactionId);
         const notesInput = notesCell.querySelector('.notes-input');
         const preview = notesCell.querySelector('.notes-preview');
-        
+
         if (notesInput && preview) {
           // Hide preview, show input
           preview.style.display = 'none';
@@ -3554,54 +3558,59 @@ function setupEventListeners() {
     });
 
     // Handle notes input blur to save
-    transactionsTable.addEventListener('blur', e => {
-      if (e.target.classList.contains('notes-input')) {
-        const notesInput = e.target;
-        const transactionId = parseInt(notesInput.dataset.transactionId);
-        const notesCell = notesInput.closest('.notes-cell');
-        const preview = notesCell.querySelector('.notes-preview');
-        const notesText = notesCell.querySelector('.notes-text');
-        const notesIcon = notesCell.querySelector('.notes-icon');
-        
-        const newNotes = notesInput.value.trim();
-        
-        // Update transaction
-        const transaction = (typeof transactionsMap !== 'undefined' && transactionsMap.has(transactionId))
-          ? transactionsMap.get(transactionId)
-          : transactions.find(t => t.id === transactionId);
-        if (transaction) {
-          transaction.notes = newNotes;
-          transaction.updated = true;
-          if (typeof dirtyTransactions !== 'undefined') {
-            dirtyTransactions.add(transactionId);
+    transactionsTable.addEventListener(
+      'blur',
+      e => {
+        if (e.target.classList.contains('notes-input')) {
+          const notesInput = e.target;
+          const transactionId = parseInt(notesInput.dataset.transactionId);
+          const notesCell = notesInput.closest('.notes-cell');
+          const preview = notesCell.querySelector('.notes-preview');
+          const notesText = notesCell.querySelector('.notes-text');
+          const notesIcon = notesCell.querySelector('.notes-icon');
+
+          const newNotes = notesInput.value.trim();
+
+          // Update transaction
+          const transaction =
+            typeof transactionsMap !== 'undefined' && transactionsMap.has(transactionId)
+              ? transactionsMap.get(transactionId)
+              : transactions.find(t => t.id === transactionId);
+          if (transaction) {
+            transaction.notes = newNotes;
+            transaction.updated = true;
+            if (typeof dirtyTransactions !== 'undefined') {
+              dirtyTransactions.add(transactionId);
+            }
+
+            // Save to IndexedDB
+            if (typeof saveData !== 'undefined') {
+              saveData();
+            }
           }
-          
-          // Save to IndexedDB
-          if (typeof saveData !== 'undefined') {
-            saveData();
-          }
-        }
-        
-        // Update preview
-        const safeNotes = escapeHTML(newNotes);
-        if (newNotes) {
-          // Show notes with icon and text
-          preview.innerHTML = `
+
+          // Update preview
+          const safeNotes = escapeHTML(newNotes);
+          if (newNotes) {
+            // Show notes with icon and text
+            preview.innerHTML = `
             <span class="notes-icon">📝</span>
             <span class="notes-text">${newNotes.length > 30 ? newNotes.substring(0, 30) + '...' : newNotes}</span>
           `;
-          preview.title = safeNotes;
-        } else {
-          // Clear preview - empty cell
-          preview.innerHTML = '';
-          preview.title = 'Click to add notes';
+            preview.title = safeNotes;
+          } else {
+            // Clear preview - empty cell
+            preview.innerHTML = '';
+            preview.title = 'Click to add notes';
+          }
+
+          // Hide input, show preview
+          notesInput.style.display = 'none';
+          preview.style.display = 'flex';
         }
-        
-        // Hide input, show preview
-        notesInput.style.display = 'none';
-        preview.style.display = 'flex';
-      }
-    }, true);
+      },
+      true
+    );
 
     // Handle Enter key to save notes
     transactionsTable.addEventListener('keydown', e => {
@@ -3749,52 +3758,57 @@ function setupEventListeners() {
     }
 
     // Handle notes input blur and Enter key
-    transactionsTable.addEventListener('blur', e => {
-      if (e.target.classList.contains('notes-input')) {
-        const notesInput = e.target;
-        const transactionId = parseInt(notesInput.dataset.transactionId);
-        const notesCell = notesInput.closest('.notes-cell');
-        const preview = notesCell.querySelector('.notes-preview');
-        const notesText = notesCell.querySelector('.notes-text');
-        const notesIcon = notesCell.querySelector('.notes-icon');
-        
-        const newNotes = notesInput.value.trim();
-        
-        // Update transaction
-        const transaction = transactionsMap.get(transactionId) || transactions.find(t => t.id === transactionId);
-        if (transaction) {
-          transaction.notes = newNotes;
-          transaction.updated = true;
-          if (typeof dirtyTransactions !== 'undefined') {
-            dirtyTransactions.add(transactionId);
+    transactionsTable.addEventListener(
+      'blur',
+      e => {
+        if (e.target.classList.contains('notes-input')) {
+          const notesInput = e.target;
+          const transactionId = parseInt(notesInput.dataset.transactionId);
+          const notesCell = notesInput.closest('.notes-cell');
+          const preview = notesCell.querySelector('.notes-preview');
+          const notesText = notesCell.querySelector('.notes-text');
+          const notesIcon = notesCell.querySelector('.notes-icon');
+
+          const newNotes = notesInput.value.trim();
+
+          // Update transaction
+          const transaction =
+            transactionsMap.get(transactionId) || transactions.find(t => t.id === transactionId);
+          if (transaction) {
+            transaction.notes = newNotes;
+            transaction.updated = true;
+            if (typeof dirtyTransactions !== 'undefined') {
+              dirtyTransactions.add(transactionId);
+            }
+
+            // Save to IndexedDB
+            if (typeof saveData !== 'undefined') {
+              saveData();
+            }
           }
-          
-          // Save to IndexedDB
-          if (typeof saveData !== 'undefined') {
-            saveData();
-          }
-        }
-        
-        // Update preview
-        const safeNotes = escapeHTML(newNotes);
-        if (newNotes) {
-          // Show notes with icon and text
-          preview.innerHTML = `
+
+          // Update preview
+          const safeNotes = escapeHTML(newNotes);
+          if (newNotes) {
+            // Show notes with icon and text
+            preview.innerHTML = `
             <span class="notes-icon">📝</span>
             <span class="notes-text">${newNotes.length > 30 ? newNotes.substring(0, 30) + '...' : newNotes}</span>
           `;
-          preview.title = safeNotes;
-        } else {
-          // Clear preview - empty cell
-          preview.innerHTML = '';
-          preview.title = 'Click to add notes';
+            preview.title = safeNotes;
+          } else {
+            // Clear preview - empty cell
+            preview.innerHTML = '';
+            preview.title = 'Click to add notes';
+          }
+
+          // Hide input, show preview
+          notesInput.style.display = 'none';
+          preview.style.display = 'flex';
         }
-        
-        // Hide input, show preview
-        notesInput.style.display = 'none';
-        preview.style.display = 'flex';
-      }
-    }, true);
+      },
+      true
+    );
 
     // Handle Enter key to save notes
     transactionsTable.addEventListener('keydown', e => {

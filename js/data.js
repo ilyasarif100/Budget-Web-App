@@ -97,11 +97,11 @@ function invalidateCache() {
 const getCategorySpendingMemoized =
   typeof memoize !== 'undefined'
     ? memoize(
-        (cacheVersion) => {
+        cacheVersion => {
           // Calculate category spending - only count expenses (positive amounts), not income
           // ALWAYS use filteredTransactions to respect date/month filters (month-to-month tracking)
           const spending = {};
-          
+
           // Use filteredTransactions which already respects the date filter
           // This ensures we only count spending for the selected month/period
           const transactionsToProcess = filteredTransactions.filter(
@@ -117,10 +117,10 @@ const getCategorySpendingMemoized =
           cacheInvalidated = false;
           return spending;
         },
-        { 
+        {
           maxAge: 5000,
           // Include cacheVersion in key - when version changes, cache misses and recalculates
-          keyGenerator: (cacheVersion) => `categorySpending_v${cacheVersion}`
+          keyGenerator: cacheVersion => `categorySpending_v${cacheVersion}`,
         }
       ) // Cache for 5 seconds
     : function () {

@@ -1,11 +1,13 @@
 # Fix ERR_SSL_PROTOCOL_ERROR on localhost
 
 ## The Problem
+
 Your browser has cached HSTS (HTTP Strict Transport Security) for localhost, forcing it to use HTTPS even though the server only serves HTTP.
 
 ## Quick Fix (Recommended)
 
 ### Use Incognito/Private Window
+
 1. Open a new **incognito/private window**:
    - **Chrome/Edge:** Press `Cmd+Shift+N` (Mac) or `Ctrl+Shift+N` (Windows)
    - **Firefox:** Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows)
@@ -63,6 +65,7 @@ This bypasses the HSTS cache completely.
 1. **Close Safari completely**
 
 2. **Delete HSTS file:**
+
    ```bash
    rm ~/Library/Cookies/HSTS.plist
    ```
@@ -113,4 +116,3 @@ When a server sends HSTS headers, browsers cache them to force HTTPS for securit
 ---
 
 **Note:** The server configuration is correct. This is purely a browser cache issue.
-

@@ -758,7 +758,11 @@ async function deleteAccount(id) {
       return;
     }
   } else {
-    if (!confirm(`Are you sure you want to delete "${account.name || account.institutionName || 'this account'}"?`)) {
+    if (
+      !confirm(
+        `Are you sure you want to delete "${account.name || account.institutionName || 'this account'}"?`
+      )
+    ) {
       return;
     }
   }
@@ -870,9 +874,9 @@ function exportToCSV() {
 
   try {
     const csvSections = [];
-    
+
     // Helper function to format currency for CSV (quoted to preserve commas)
-    const formatCurrencyValue = (amount) => {
+    const formatCurrencyValue = amount => {
       const num = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
       const absNum = Math.abs(num);
       // Split into integer and decimal parts
@@ -890,9 +894,9 @@ function exportToCSV() {
       // Wrap in quotes so CSV parsers don't split on the comma
       return `"$${formattedInteger}.${decimalPart}"`;
     };
-    
+
     // Helper function to format date
-    const formatDateValue = (dateString) => {
+    const formatDateValue = dateString => {
       if (!dateString) return '';
       const date = new Date(dateString + 'T00:00:00');
       if (isNaN(date.getTime())) return dateString;
@@ -901,13 +905,16 @@ function exportToCSV() {
 
     // Header Section
     csvSections.push('BUDGET TRACKER EXPORT');
-    csvSections.push('Generated: ' + new Date().toLocaleString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    }));
+    csvSections.push(
+      'Generated: ' +
+        new Date().toLocaleString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+    );
     csvSections.push('');
 
     // Section 1: Summary Information
@@ -915,11 +922,11 @@ function exportToCSV() {
     csvSections.push('SUMMARY');
     csvSections.push('═══════════════════════════════════════════════════════════');
     csvSections.push('');
-    
+
     const totalTransactions = filteredTransactions.length || transactions.length;
     const totalAccounts = accounts.length;
     const totalCategories = categories.length;
-    
+
     // Calculate total balance
     let totalBalance = 0;
     accounts.forEach(acc => {
@@ -929,16 +936,19 @@ function exportToCSV() {
         totalBalance += acc.initialBalance;
       }
     });
-    
+
     // Calculate total spent and income
-    const transactionsToCount = filteredTransactions.length > 0 ? filteredTransactions : transactions;
+    const transactionsToCount =
+      filteredTransactions.length > 0 ? filteredTransactions : transactions;
     const totalSpent = transactionsToCount
       .filter(t => t.status !== 'removed' && t.amount > 0)
       .reduce((sum, t) => sum + t.amount, 0);
-    const totalIncome = Math.abs(transactionsToCount
-      .filter(t => t.status !== 'removed' && t.amount < 0)
-      .reduce((sum, t) => sum + t.amount, 0));
-    
+    const totalIncome = Math.abs(
+      transactionsToCount
+        .filter(t => t.status !== 'removed' && t.amount < 0)
+        .reduce((sum, t) => sum + t.amount, 0)
+    );
+
     csvSections.push('Metric,Value');
     csvSections.push(`Total Transactions,${totalTransactions.toLocaleString()}`);
     csvSections.push(`Total Accounts,${totalAccounts}`);
@@ -956,21 +966,23 @@ function exportToCSV() {
     csvSections.push('═══════════════════════════════════════════════════════════');
     csvSections.push('');
     csvSections.push('Account Name,Type,Subtype,Last 4 Digits,Balance');
-    
+
     let accountsTotal = 0;
     accounts.forEach(acc => {
       const accountName = acc.name || acc.institutionName || 'Unknown';
       const balance = acc.balance !== undefined ? acc.balance : acc.initialBalance || 0;
       accountsTotal += balance;
-      csvSections.push([
-        `"${accountName.replace(/"/g, '""')}"`,
-        (acc.type || '').charAt(0).toUpperCase() + (acc.type || '').slice(1),
-        (acc.subtype || '').charAt(0).toUpperCase() + (acc.subtype || '').slice(1),
-        acc.mask || 'N/A',
-        formatCurrencyValue(balance)
-      ].join(','));
+      csvSections.push(
+        [
+          `"${accountName.replace(/"/g, '""')}"`,
+          (acc.type || '').charAt(0).toUpperCase() + (acc.type || '').slice(1),
+          (acc.subtype || '').charAt(0).toUpperCase() + (acc.subtype || '').slice(1),
+          acc.mask || 'N/A',
+          formatCurrencyValue(balance),
+        ].join(',')
+      );
     });
-    
+
     // Add totals row
     csvSections.push('');
     csvSections.push(`"TOTAL",,,,${formatCurrencyValue(accountsTotal)}`);
@@ -983,45 +995,50 @@ function exportToCSV() {
     csvSections.push('═══════════════════════════════════════════════════════════');
     csvSections.push('');
     csvSections.push('Category Name,Monthly Allocation,Spent,Remaining,% Used');
-    
+
     // Get category spending (use getCategorySpending if available, otherwise calculate)
     let categorySpending = {};
     if (typeof getCategorySpending === 'function') {
       categorySpending = getCategorySpending();
     } else {
       // Fallback calculation
-      const transactionsToProcess = (filteredTransactions.length > 0 ? filteredTransactions : transactions)
-        .filter(t => t.status !== 'removed' && t.category && t.amount > 0);
+      const transactionsToProcess = (
+        filteredTransactions.length > 0 ? filteredTransactions : transactions
+      ).filter(t => t.status !== 'removed' && t.category && t.amount > 0);
       transactionsToProcess.forEach(t => {
         const category = t.category;
         categorySpending[category] = (categorySpending[category] || 0) + t.amount;
       });
     }
-    
+
     let totalAllocation = 0;
     let totalCategorySpent = 0;
-    
+
     categories.forEach(cat => {
       const allocation = cat.allocation || 0;
       const spent = categorySpending[cat.name] || 0;
       const remaining = allocation - spent;
       const percentUsed = allocation > 0 ? ((spent / allocation) * 100).toFixed(1) : '0.0';
-      
+
       totalAllocation += allocation;
       totalCategorySpent += spent;
-      
-      csvSections.push([
-        `"${(cat.name || '').replace(/"/g, '""')}"`,
-        formatCurrencyValue(allocation),
-        formatCurrencyValue(spent),
-        formatCurrencyValue(remaining),
-        `${percentUsed}%`
-      ].join(','));
+
+      csvSections.push(
+        [
+          `"${(cat.name || '').replace(/"/g, '""')}"`,
+          formatCurrencyValue(allocation),
+          formatCurrencyValue(spent),
+          formatCurrencyValue(remaining),
+          `${percentUsed}%`,
+        ].join(',')
+      );
     });
-    
+
     // Add totals row
     csvSections.push('');
-    csvSections.push(`"TOTAL",${formatCurrencyValue(totalAllocation)},${formatCurrencyValue(totalCategorySpent)},${formatCurrencyValue(totalAllocation - totalCategorySpent)},${totalAllocation > 0 ? ((totalCategorySpent / totalAllocation) * 100).toFixed(1) : '0.0'}%`);
+    csvSections.push(
+      `"TOTAL",${formatCurrencyValue(totalAllocation)},${formatCurrencyValue(totalCategorySpent)},${formatCurrencyValue(totalAllocation - totalCategorySpent)},${totalAllocation > 0 ? ((totalCategorySpent / totalAllocation) * 100).toFixed(1) : '0.0'}%`
+    );
     csvSections.push('');
     csvSections.push('');
 
@@ -1030,37 +1047,50 @@ function exportToCSV() {
     csvSections.push('TRANSACTIONS');
     csvSections.push('═══════════════════════════════════════════════════════════');
     csvSections.push('');
-    const headers = ['Date', 'Merchant', 'Amount', 'Category', 'Status', 'Account Name', 'Account Last 4', 'Notes'];
+    const headers = [
+      'Date',
+      'Merchant',
+      'Amount',
+      'Category',
+      'Status',
+      'Account Name',
+      'Account Last 4',
+      'Notes',
+    ];
     csvSections.push(headers.join(','));
-    
-    const transactionsToExport = filteredTransactions.length > 0 ? filteredTransactions : transactions;
-    
+
+    const transactionsToExport =
+      filteredTransactions.length > 0 ? filteredTransactions : transactions;
+
     if (transactionsToExport.length === 0) {
       csvSections.push('No transactions to export');
     } else {
       let transactionsTotal = 0;
       transactionsToExport.forEach(t => {
         // Use Map for O(1) lookup if available, otherwise fallback to find
-        const account = (typeof accountsMap !== 'undefined' && accountsMap.has(t.accountId))
-          ? accountsMap.get(t.accountId)
-          : accounts.find(a => a.id === t.accountId);
+        const account =
+          typeof accountsMap !== 'undefined' && accountsMap.has(t.accountId)
+            ? accountsMap.get(t.accountId)
+            : accounts.find(a => a.id === t.accountId);
         const accountName = account?.name || account?.institutionName || 'Unknown';
         const accountMask = account?.mask || '';
         const notes = (t.notes || '').replace(/"/g, '""');
         transactionsTotal += t.amount;
 
-        csvSections.push([
-          formatDateValue(t.date),
-          `"${(t.merchant || '').replace(/"/g, '""')}"`,
-          formatCurrencyValue(t.amount),
-          `"${(t.category || 'Exempt').replace(/"/g, '""')}"`,
-          (t.status || 'posted').charAt(0).toUpperCase() + (t.status || 'posted').slice(1),
-          `"${accountName.replace(/"/g, '""')}"`,
-          accountMask || 'N/A',
-          `"${notes}"`
-        ].join(','));
+        csvSections.push(
+          [
+            formatDateValue(t.date),
+            `"${(t.merchant || '').replace(/"/g, '""')}"`,
+            formatCurrencyValue(t.amount),
+            `"${(t.category || 'Exempt').replace(/"/g, '""')}"`,
+            (t.status || 'posted').charAt(0).toUpperCase() + (t.status || 'posted').slice(1),
+            `"${accountName.replace(/"/g, '""')}"`,
+            accountMask || 'N/A',
+            `"${notes}"`,
+          ].join(',')
+        );
       });
-      
+
       // Add totals row
       csvSections.push('');
       csvSections.push(`"TOTAL",,,,${formatCurrencyValue(transactionsTotal)},,,`);
@@ -1513,7 +1543,10 @@ function renderAccountsSummary() {
     const chip = document.createElement('div');
     chip.className = 'account-chip';
     const balanceClass = acc.balance < 0 ? 'negative' : 'positive';
-    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
+    const accountName =
+      acc.name ||
+      acc.institutionName ||
+      `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
     chip.innerHTML = `
             <span class="account-chip-name">${escapeHTML(accountName)} ••••${acc.mask}</span>
             <span class="account-chip-balance ${balanceClass}">${formatCurrency(acc.balance)}</span>
@@ -1580,8 +1613,11 @@ function renderAccountsExpanded() {
     const accountIcon = getAccountIcon(acc.type, acc.subtype);
 
     // Use fallback for account name if missing
-    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
-    
+    const accountName =
+      acc.name ||
+      acc.institutionName ||
+      `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
+
     // Escape user-generated content to prevent XSS
     const safeAccountName = escapeHTML(accountName);
     const safeAccountTypeLabel = escapeHTML(accountTypeLabel);
@@ -2195,7 +2231,10 @@ function updateAccountsSummary() {
   accounts.forEach(acc => {
     const chip = document.createElement('div');
     chip.className = 'account-chip';
-    const accountName = acc.name || acc.institutionName || `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
+    const accountName =
+      acc.name ||
+      acc.institutionName ||
+      `${acc.type.charAt(0).toUpperCase() + acc.type.slice(1)} ${acc.subtype ? acc.subtype.charAt(0).toUpperCase() + acc.subtype.slice(1) : 'Account'}`;
     const balanceClass = acc.balance < 0 ? 'negative' : 'positive';
     chip.innerHTML = `
             <span class="account-chip-name">${escapeHTML(accountName)} ••••${acc.mask}</span>
@@ -2467,7 +2506,11 @@ function renderTransactionRow(transaction) {
   // Get account info using Map (O(1) lookup)
   const account = accountsMap.get(transaction.accountId);
   // Use account name, or fallback to account ID if name is missing
-  const accountName = account?.name || account?.institutionName || `Account ${account?.mask || ''}`.trim() || 'Unknown';
+  const accountName =
+    account?.name ||
+    account?.institutionName ||
+    `Account ${account?.mask || ''}`.trim() ||
+    'Unknown';
   const accountDisplay = account
     ? `${accountName} ••••${account.mask}`
     : `Unknown (${transaction.accountId || 'N/A'})`;
@@ -2724,7 +2767,7 @@ function updateTransactionCategory(transactionId, newCategory) {
   if (transaction) {
     const oldCategory = transaction.category || '';
     const newCategoryValue = newCategory || '';
-    
+
     // Update the transaction category FIRST
     transaction.category = newCategoryValue;
     transaction.updated = true;
@@ -2738,11 +2781,12 @@ function updateTransactionCategory(transactionId, newCategory) {
 
     // Save scroll position before re-rendering - find the scrollable container
     const tbody = document.getElementById('transactions-body');
-    const scrollContainer = tbody?.closest('.table-container') || document.querySelector('.table-container');
+    const scrollContainer =
+      tbody?.closest('.table-container') || document.querySelector('.table-container');
     const scrollPosition = scrollContainer
       ? scrollContainer.scrollTop
       : window.pageYOffset || document.documentElement.scrollTop;
-    
+
     // Also save the row index to restore to the same transaction
     const rowIndex = filteredTransactions.findIndex(t => t.id === transactionId);
 
@@ -2756,7 +2800,7 @@ function updateTransactionCategory(transactionId, newCategory) {
     }
 
     saveData(); // Immediate save for category change
-    
+
     // Update all UI components
     if (typeof initializeDashboard !== 'undefined') {
       initializeDashboard(); // This will recalculate everything from transactions
@@ -2779,7 +2823,9 @@ function updateTransactionCategory(transactionId, newCategory) {
           scrollContainer.scrollTop = scrollPosition;
           // Also try to scroll the specific row into view if possible
           if (rowIndex >= 0) {
-            const row = tbody?.querySelector(`[data-transaction-id="${transactionId}"]`)?.closest('tr');
+            const row = tbody
+              ?.querySelector(`[data-transaction-id="${transactionId}"]`)
+              ?.closest('tr');
             if (row) {
               row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
             }
@@ -3410,24 +3456,28 @@ function setupEventListeners() {
   const transactionsTable = document.getElementById('transactions-table');
   if (transactionsTable) {
     // Prevent select from causing scroll when clicked/focused
-    transactionsTable.addEventListener('mousedown', e => {
-      if (e.target.classList.contains('category-select')) {
-        // Save scroll position before select opens
-        const scrollContainer = transactionsTable.closest('.table-container');
-        if (scrollContainer) {
-          e.target.dataset.scrollPos = scrollContainer.scrollTop;
+    transactionsTable.addEventListener(
+      'mousedown',
+      e => {
+        if (e.target.classList.contains('category-select')) {
+          // Save scroll position before select opens
+          const scrollContainer = transactionsTable.closest('.table-container');
+          if (scrollContainer) {
+            e.target.dataset.scrollPos = scrollContainer.scrollTop;
+          }
         }
-      }
-    }, { capture: true });
-    
+      },
+      { capture: true }
+    );
+
     transactionsTable.addEventListener('change', e => {
       if (e.target.classList.contains('category-select')) {
         const transactionId = parseInt(e.target.dataset.transactionId);
         const newCategory = e.target.value;
-        
+
         // Blur the select immediately to prevent it from staying focused
         e.target.blur();
-        
+
         updateTransactionCategory(transactionId, newCategory);
       }
     });

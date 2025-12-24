@@ -339,7 +339,7 @@ function updateTransactionCategory(transactionId, newCategory) {
   if (transaction) {
     const oldCategory = transaction.category || '';
     const newCategoryValue = newCategory || '';
-    
+
     // Update the transaction category FIRST
     transaction.category = newCategoryValue;
     transaction.updated = true;
@@ -355,11 +355,12 @@ function updateTransactionCategory(transactionId, newCategory) {
 
     // Save scroll position before re-rendering - find the scrollable container
     const tbody = document.getElementById('transactions-body');
-    const scrollContainer = tbody?.closest('.table-container') || document.querySelector('.table-container');
+    const scrollContainer =
+      tbody?.closest('.table-container') || document.querySelector('.table-container');
     const scrollPosition = scrollContainer
       ? scrollContainer.scrollTop
       : window.pageYOffset || document.documentElement.scrollTop;
-    
+
     // Also save the row index to restore to the same transaction
     const rowIndex = filteredTransactions.findIndex(t => t.id === transactionId);
 
@@ -398,7 +399,9 @@ function updateTransactionCategory(transactionId, newCategory) {
           scrollContainer.scrollTop = scrollPosition;
           // Also try to scroll the specific row into view if possible
           if (rowIndex >= 0) {
-            const row = tbody?.querySelector(`[data-transaction-id="${transactionId}"]`)?.closest('tr');
+            const row = tbody
+              ?.querySelector(`[data-transaction-id="${transactionId}"]`)
+              ?.closest('tr');
             if (row) {
               row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
             }

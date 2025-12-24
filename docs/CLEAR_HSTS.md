@@ -70,4 +70,3 @@ Should return nothing (no HTTPS headers).
 ---
 
 **Note:** The server is now configured to NOT send HSTS or upgrade headers for localhost. Once you clear your browser's HSTS cache, the error should be resolved.
-

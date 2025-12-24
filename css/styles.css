@@ -1316,6 +1316,25 @@ body.light-mode .modal {
 }
 
 /* Transaction Actions Column */
+.transactions-table td.notes-cell {
+    text-align: center;
+    width: 50px;
+    padding: 0.875rem;
+    vertical-align: middle;
+}
+
+.notes-indicator {
+    cursor: help;
+    font-size: 1.1em;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    display: inline-block;
+}
+
+.notes-indicator:hover {
+    opacity: 1;
+}
+
 .transactions-table td.actions-cell {
     padding: 0.875rem;
     vertical-align: middle;

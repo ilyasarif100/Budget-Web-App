@@ -61,14 +61,8 @@ function getSyncStatusColor(timestamp) {
 }
 
 function canSync() {
-  const lastSync = getLastSyncTime();
-  if (!lastSync) {
-    return true;
-  } // Never synced, allow sync
-  const now = Date.now();
-  const diff = now - lastSync;
-  const minutes = diff / 60000;
-  return minutes >= 5; // 5 minute cooldown
+  // Cooldown removed - always allow sync
+  return true;
 }
 
 // Update Sync Button Status
@@ -96,18 +90,11 @@ function updateSyncButtonStatus() {
     syncLastTime.textContent = 'Never synced';
   }
 
-  // Disable button if synced recently
-  if (!canSyncNow && lastSync) {
-    syncBtn.disabled = true;
-    syncBtn.style.opacity = '0.6';
-    syncBtn.style.cursor = 'not-allowed';
-    syncBtnText.textContent = `Synced ${formatTimeAgo(lastSync)}`;
-  } else {
-    syncBtn.disabled = false;
-    syncBtn.style.opacity = '1';
-    syncBtn.style.cursor = 'pointer';
-    syncBtnText.textContent = 'Sync Transactions';
-  }
+  // Button always enabled (cooldown removed)
+  syncBtn.disabled = false;
+  syncBtn.style.opacity = '1';
+  syncBtn.style.cursor = 'pointer';
+  syncBtnText.textContent = 'Sync Transactions';
 }
 
 // Calculate Total Balance (sum of selected accounts)
@@ -368,10 +355,13 @@ function updateTransactionCategory(transactionId, newCategory) {
 
     // Save scroll position before re-rendering - find the scrollable container
     const tbody = document.getElementById('transactions-body');
-    const scrollContainer = tbody?.closest('.table-container');
+    const scrollContainer = tbody?.closest('.table-container') || document.querySelector('.table-container');
     const scrollPosition = scrollContainer
       ? scrollContainer.scrollTop
       : window.pageYOffset || document.documentElement.scrollTop;
+    
+    // Also save the row index to restore to the same transaction
+    const rowIndex = filteredTransactions.findIndex(t => t.id === transactionId);
 
     // CRITICAL: Rebuild filteredTransactions with updated category
     // This ensures category spending reflects the change immediately
@@ -400,14 +390,24 @@ function updateTransactionCategory(transactionId, newCategory) {
       renderTransactions();
     }
 
-    // Restore scroll position after rendering (use requestAnimationFrame to ensure DOM is updated)
+    // Restore scroll position after all rendering is complete
+    // Use double requestAnimationFrame to ensure all DOM updates are finished
     requestAnimationFrame(() => {
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollPosition;
-      } else {
-        // Fallback to window scroll if container not found
-        window.scrollTo(0, scrollPosition);
-      }
+      requestAnimationFrame(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollPosition;
+          // Also try to scroll the specific row into view if possible
+          if (rowIndex >= 0) {
+            const row = tbody?.querySelector(`[data-transaction-id="${transactionId}"]`)?.closest('tr');
+            if (row) {
+              row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+            }
+          }
+        } else {
+          // Fallback to window scroll if container not found
+          window.scrollTo({ top: scrollPosition, behavior: 'instant' });
+        }
+      });
     });
   }
 }

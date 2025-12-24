@@ -348,6 +348,7 @@ async function syncAllTransactionsInternal(accountIdsToSync = null) {
               plaidAccountId: plaidTransaction.account_id,
               updated: false,
               isNew: true, // Mark as new transaction for highlighting
+              notes: '', // Notes field for user-added notes
             };
 
             transactions.push(newTransaction);
@@ -860,55 +861,251 @@ async function deleteAccount(id) {
   }
 }
 
-// CSV Export Function
+// Enhanced CSV Export Function with Accounts, Categories, and Summary
 function exportToCSV() {
   const exportBtn = document.getElementById('export-btn');
-
-  if (filteredTransactions.length === 0) {
-    showToast('No transactions to export', 'error');
-    return;
-  }
 
   // Set loading state
   setLoading('export', true, exportBtn);
 
-  const headers = ['Date', 'Merchant', 'Amount', 'Category', 'Status', 'Account'];
-  const rows = filteredTransactions.map(t => {
-    const account = accounts.find(a => a.id === t.accountId);
-    const displayName = account?.name || account?.institutionName || `Account ${account?.mask || ''}`.trim() || 'Unknown';
-    const accountName = account ? `${displayName} ••••${account.mask}` : 'Unknown';
+  try {
+    const csvSections = [];
+    
+    // Helper function to format currency for CSV (quoted to preserve commas)
+    const formatCurrencyValue = (amount) => {
+      const num = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
+      const absNum = Math.abs(num);
+      // Split into integer and decimal parts
+      const parts = absNum.toFixed(2).split('.');
+      const integerPart = parts[0];
+      const decimalPart = parts[1];
+      // Add commas to integer part manually (more reliable than regex)
+      let formattedInteger = '';
+      for (let i = integerPart.length - 1, j = 0; i >= 0; i--, j++) {
+        if (j > 0 && j % 3 === 0) {
+          formattedInteger = ',' + formattedInteger;
+        }
+        formattedInteger = integerPart[i] + formattedInteger;
+      }
+      // Wrap in quotes so CSV parsers don't split on the comma
+      return `"$${formattedInteger}.${decimalPart}"`;
+    };
+    
+    // Helper function to format date
+    const formatDateValue = (dateString) => {
+      if (!dateString) return '';
+      const date = new Date(dateString + 'T00:00:00');
+      if (isNaN(date.getTime())) return dateString;
+      return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    };
 
-    return [t.date, t.merchant, t.amount.toFixed(2), t.category || 'Exempt', t.status, accountName];
-  });
+    // Header Section
+    csvSections.push('BUDGET TRACKER EXPORT');
+    csvSections.push('Generated: ' + new Date().toLocaleString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    }));
+    csvSections.push('');
 
-  const csvContent = [
-    headers.join(','),
-    ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
-  ].join('\n');
+    // Section 1: Summary Information
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('SUMMARY');
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('');
+    
+    const totalTransactions = filteredTransactions.length || transactions.length;
+    const totalAccounts = accounts.length;
+    const totalCategories = categories.length;
+    
+    // Calculate total balance
+    let totalBalance = 0;
+    accounts.forEach(acc => {
+      if (acc.balance !== undefined) {
+        totalBalance += acc.balance;
+      } else if (acc.initialBalance !== undefined) {
+        totalBalance += acc.initialBalance;
+      }
+    });
+    
+    // Calculate total spent and income
+    const transactionsToCount = filteredTransactions.length > 0 ? filteredTransactions : transactions;
+    const totalSpent = transactionsToCount
+      .filter(t => t.status !== 'removed' && t.amount > 0)
+      .reduce((sum, t) => sum + t.amount, 0);
+    const totalIncome = Math.abs(transactionsToCount
+      .filter(t => t.status !== 'removed' && t.amount < 0)
+      .reduce((sum, t) => sum + t.amount, 0));
+    
+    csvSections.push('Metric,Value');
+    csvSections.push(`Total Transactions,${totalTransactions.toLocaleString()}`);
+    csvSections.push(`Total Accounts,${totalAccounts}`);
+    csvSections.push(`Total Categories,${totalCategories}`);
+    csvSections.push(`Total Balance,${formatCurrencyValue(totalBalance)}`);
+    csvSections.push(`Total Spent,${formatCurrencyValue(totalSpent)}`);
+    csvSections.push(`Total Income,${formatCurrencyValue(totalIncome)}`);
+    csvSections.push(`Net Change,${formatCurrencyValue(totalIncome - totalSpent)}`);
+    csvSections.push('');
+    csvSections.push('');
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const link = document.createElement('a');
-  const url = URL.createObjectURL(blob);
+    // Section 2: Accounts with Balances
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('ACCOUNTS');
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('');
+    csvSections.push('Account Name,Type,Subtype,Last 4 Digits,Balance');
+    
+    let accountsTotal = 0;
+    accounts.forEach(acc => {
+      const accountName = acc.name || acc.institutionName || 'Unknown';
+      const balance = acc.balance !== undefined ? acc.balance : acc.initialBalance || 0;
+      accountsTotal += balance;
+      csvSections.push([
+        `"${accountName.replace(/"/g, '""')}"`,
+        (acc.type || '').charAt(0).toUpperCase() + (acc.type || '').slice(1),
+        (acc.subtype || '').charAt(0).toUpperCase() + (acc.subtype || '').slice(1),
+        acc.mask || 'N/A',
+        formatCurrencyValue(balance)
+      ].join(','));
+    });
+    
+    // Add totals row
+    csvSections.push('');
+    csvSections.push(`"TOTAL",,,,${formatCurrencyValue(accountsTotal)}`);
+    csvSections.push('');
+    csvSections.push('');
 
-  const dateRange = getDateRange();
-  let filename = 'transactions';
-  if (dateRange.startDate && dateRange.endDate) {
-    const start = dateRange.startDate.toISOString().split('T')[0];
-    const end = dateRange.endDate.toISOString().split('T')[0];
-    filename = `transactions_${start}_to_${end}`;
+    // Section 3: Budget Categories with Allocations and Remaining
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('BUDGET CATEGORIES');
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('');
+    csvSections.push('Category Name,Monthly Allocation,Spent,Remaining,% Used');
+    
+    // Get category spending (use getCategorySpending if available, otherwise calculate)
+    let categorySpending = {};
+    if (typeof getCategorySpending === 'function') {
+      categorySpending = getCategorySpending();
+    } else {
+      // Fallback calculation
+      const transactionsToProcess = (filteredTransactions.length > 0 ? filteredTransactions : transactions)
+        .filter(t => t.status !== 'removed' && t.category && t.amount > 0);
+      transactionsToProcess.forEach(t => {
+        const category = t.category;
+        categorySpending[category] = (categorySpending[category] || 0) + t.amount;
+      });
+    }
+    
+    let totalAllocation = 0;
+    let totalCategorySpent = 0;
+    
+    categories.forEach(cat => {
+      const allocation = cat.allocation || 0;
+      const spent = categorySpending[cat.name] || 0;
+      const remaining = allocation - spent;
+      const percentUsed = allocation > 0 ? ((spent / allocation) * 100).toFixed(1) : '0.0';
+      
+      totalAllocation += allocation;
+      totalCategorySpent += spent;
+      
+      csvSections.push([
+        `"${(cat.name || '').replace(/"/g, '""')}"`,
+        formatCurrencyValue(allocation),
+        formatCurrencyValue(spent),
+        formatCurrencyValue(remaining),
+        `${percentUsed}%`
+      ].join(','));
+    });
+    
+    // Add totals row
+    csvSections.push('');
+    csvSections.push(`"TOTAL",${formatCurrencyValue(totalAllocation)},${formatCurrencyValue(totalCategorySpent)},${formatCurrencyValue(totalAllocation - totalCategorySpent)},${totalAllocation > 0 ? ((totalCategorySpent / totalAllocation) * 100).toFixed(1) : '0.0'}%`);
+    csvSections.push('');
+    csvSections.push('');
+
+    // Section 4: Transactions
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('TRANSACTIONS');
+    csvSections.push('═══════════════════════════════════════════════════════════');
+    csvSections.push('');
+    const headers = ['Date', 'Merchant', 'Amount', 'Category', 'Status', 'Account Name', 'Account Last 4', 'Notes'];
+    csvSections.push(headers.join(','));
+    
+    const transactionsToExport = filteredTransactions.length > 0 ? filteredTransactions : transactions;
+    
+    if (transactionsToExport.length === 0) {
+      csvSections.push('No transactions to export');
+    } else {
+      let transactionsTotal = 0;
+      transactionsToExport.forEach(t => {
+        // Use Map for O(1) lookup if available, otherwise fallback to find
+        const account = (typeof accountsMap !== 'undefined' && accountsMap.has(t.accountId))
+          ? accountsMap.get(t.accountId)
+          : accounts.find(a => a.id === t.accountId);
+        const accountName = account?.name || account?.institutionName || 'Unknown';
+        const accountMask = account?.mask || '';
+        const notes = (t.notes || '').replace(/"/g, '""');
+        transactionsTotal += t.amount;
+
+        csvSections.push([
+          formatDateValue(t.date),
+          `"${(t.merchant || '').replace(/"/g, '""')}"`,
+          formatCurrencyValue(t.amount),
+          `"${(t.category || 'Exempt').replace(/"/g, '""')}"`,
+          (t.status || 'posted').charAt(0).toUpperCase() + (t.status || 'posted').slice(1),
+          `"${accountName.replace(/"/g, '""')}"`,
+          accountMask || 'N/A',
+          `"${notes}"`
+        ].join(','));
+      });
+      
+      // Add totals row
+      csvSections.push('');
+      csvSections.push(`"TOTAL",,,,${formatCurrencyValue(transactionsTotal)},,,`);
+    }
+
+    // Combine all sections
+    const csvContent = csvSections.join('\n');
+
+    // Create and download file with UTF-8 BOM for Excel compatibility
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    const dateRange = getDateRange();
+    let filename = 'budget-export';
+    if (dateRange && dateRange.startDate && dateRange.endDate) {
+      const start = dateRange.startDate.toISOString().split('T')[0];
+      const end = dateRange.endDate.toISOString().split('T')[0];
+      filename = `budget-export_${start}_to_${end}`;
+    } else {
+      const date = new Date().toISOString().split('T')[0];
+      filename = `budget-export_${date}`;
+    }
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${filename}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    // Clear loading state
+    setLoading('export', false, exportBtn);
+    showToast('Complete budget data exported successfully', 'success');
+  } catch (error) {
+    setLoading('export', false, exportBtn);
+    console.error('Export error:', error);
+    if (typeof errorHandler !== 'undefined') {
+      errorHandler.handle(error, 'CSV Export', true);
+    } else {
+      showToast('Error exporting data: ' + error.message, 'error');
+    }
   }
-
-  link.setAttribute('href', url);
-  link.setAttribute('download', `${filename}.csv`);
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-
-  // Clear loading state
-  setLoading('export', false, exportBtn);
-  showToast('Transactions exported successfully', 'success');
 }
 
 // Throttled IndexedDB save (prevents excessive writes)
@@ -2285,6 +2482,7 @@ function renderTransactionRow(transaction) {
   const safeAccountDisplay = escapeHTML(accountDisplay);
   const safeAccountTypeBadge = escapeHTML(accountTypeBadge);
   const safeStatus = escapeHTML(transaction.status || 'posted');
+  const safeNotes = escapeHTML(transaction.notes || '');
 
   row.innerHTML = `
         <td>${formatDate(transaction.date)}</td>
@@ -2297,6 +2495,9 @@ function renderTransactionRow(transaction) {
                 <div class="transaction-account-name">${safeAccountDisplay}</div>
                 <span class="transaction-account-badge">${safeAccountTypeBadge}</span>
             </div>
+        </td>
+        <td class="notes-cell">
+            ${transaction.notes ? `<span class="notes-indicator" title="${safeNotes}">📝</span>` : ''}
         </td>
         <td class="actions-cell">
             <button class="action-btn edit-btn" data-id="${transaction.id}" aria-label="Edit transaction" title="Edit">
@@ -2333,7 +2534,7 @@ function renderTransactions() {
   if (filteredTransactions.length === 0) {
     const emptyRow = document.createElement('tr');
     emptyRow.innerHTML =
-      '<td colspan="7" style="text-align: center; padding: 2rem; color: var(--text-secondary);">No transactions found</td>';
+      '<td colspan="8" style="text-align: center; padding: 2rem; color: var(--text-secondary);">No transactions found</td>';
     tbody.appendChild(emptyRow);
     updateSortIndicators();
     return;
@@ -2354,7 +2555,7 @@ function renderTransactions() {
     // Add top spacer
     const topSpacer = document.createElement('tr');
     topSpacer.style.height = `${virtualScrollState.startIndex * virtualScrollState.rowHeight}px`;
-    topSpacer.innerHTML = '<td colspan="7" style="padding: 0; border: none;"></td>';
+    topSpacer.innerHTML = '<td colspan="8" style="padding: 0; border: none;"></td>';
     tbody.appendChild(topSpacer);
 
     // Render visible rows
@@ -2367,7 +2568,7 @@ function renderTransactions() {
     const bottomSpacer = document.createElement('tr');
     const remainingRows = filteredTransactions.length - virtualScrollState.endIndex;
     bottomSpacer.style.height = `${remainingRows * virtualScrollState.rowHeight}px`;
-    bottomSpacer.innerHTML = '<td colspan="7" style="padding: 0; border: none;"></td>';
+    bottomSpacer.innerHTML = '<td colspan="8" style="padding: 0; border: none;"></td>';
     tbody.appendChild(bottomSpacer);
   } else {
     // Small dataset: render all at once
@@ -2492,6 +2693,12 @@ function editTransaction(id) {
     categorySelect.value = transaction.category || '';
   }
 
+  // Set notes
+  const notesField = document.getElementById('transaction-notes');
+  if (notesField) {
+    notesField.value = transaction.notes || '';
+  }
+
   // Update modal title and button text
   const modalTitle = document.querySelector('#transaction-modal h2');
   if (modalTitle) {
@@ -2531,10 +2738,13 @@ function updateTransactionCategory(transactionId, newCategory) {
 
     // Save scroll position before re-rendering - find the scrollable container
     const tbody = document.getElementById('transactions-body');
-    const scrollContainer = tbody?.closest('.table-container');
+    const scrollContainer = tbody?.closest('.table-container') || document.querySelector('.table-container');
     const scrollPosition = scrollContainer
       ? scrollContainer.scrollTop
       : window.pageYOffset || document.documentElement.scrollTop;
+    
+    // Also save the row index to restore to the same transaction
+    const rowIndex = filteredTransactions.findIndex(t => t.id === transactionId);
 
     // CRITICAL: Rebuild filteredTransactions with updated category
     // This ensures category spending reflects the change immediately
@@ -2561,14 +2771,24 @@ function updateTransactionCategory(transactionId, newCategory) {
       renderTransactions();
     }
 
-    // Restore scroll position after rendering (use requestAnimationFrame to ensure DOM is updated)
+    // Restore scroll position after all rendering is complete
+    // Use double requestAnimationFrame to ensure all DOM updates are finished
     requestAnimationFrame(() => {
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollPosition;
-      } else {
-        // Fallback to window scroll if container not found
-        window.scrollTo(0, scrollPosition);
-      }
+      requestAnimationFrame(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollPosition;
+          // Also try to scroll the specific row into view if possible
+          if (rowIndex >= 0) {
+            const row = tbody?.querySelector(`[data-transaction-id="${transactionId}"]`)?.closest('tr');
+            if (row) {
+              row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+            }
+          }
+        } else {
+          // Fallback to window scroll if container not found
+          window.scrollTo({ top: scrollPosition, behavior: 'instant' });
+        }
+      });
     });
   }
 }
@@ -3189,10 +3409,25 @@ function setupEventListeners() {
   // Event delegation for transaction table (prevents memory leaks)
   const transactionsTable = document.getElementById('transactions-table');
   if (transactionsTable) {
+    // Prevent select from causing scroll when clicked/focused
+    transactionsTable.addEventListener('mousedown', e => {
+      if (e.target.classList.contains('category-select')) {
+        // Save scroll position before select opens
+        const scrollContainer = transactionsTable.closest('.table-container');
+        if (scrollContainer) {
+          e.target.dataset.scrollPos = scrollContainer.scrollTop;
+        }
+      }
+    }, { capture: true });
+    
     transactionsTable.addEventListener('change', e => {
       if (e.target.classList.contains('category-select')) {
         const transactionId = parseInt(e.target.dataset.transactionId);
         const newCategory = e.target.value;
+        
+        // Blur the select immediately to prevent it from staying focused
+        e.target.blur();
+        
         updateTransactionCategory(transactionId, newCategory);
       }
     });
@@ -3462,13 +3697,7 @@ function setupEventListeners() {
       return;
     }
 
-    // Check if sync is allowed (5 minute cooldown)
-    if (!canSync()) {
-      const lastSync = getLastSyncTime();
-      showToast(`Please wait. Last synced ${formatTimeAgo(lastSync)}.`, 'info');
-      return;
-    }
-
+    // Cooldown removed - sync is always allowed
     populateSyncAccountsModal();
     document.getElementById('sync-accounts-modal').classList.add('active');
   });
@@ -3825,6 +4054,7 @@ function setupEventListeners() {
     document.getElementById('transaction-amount').value = '';
     document.getElementById('transaction-category').value = '';
     document.getElementById('transaction-status').value = 'posted';
+    document.getElementById('transaction-notes').value = '';
     const modalTitle = document.querySelector('#transaction-modal h2');
     if (modalTitle) {
       modalTitle.textContent = 'Add Transaction';
@@ -3884,6 +4114,7 @@ function setupEventListeners() {
     const category = document.getElementById('transaction-category').value;
     const status = document.getElementById('transaction-status').value;
     const accountId = document.getElementById('transaction-account').value;
+    const notes = document.getElementById('transaction-notes').value.trim();
 
     // Process amount: Plaid convention - negative = income, positive = expense
     // User enters: positive = expense (stored as positive), negative = income (stored as negative)
@@ -3910,6 +4141,7 @@ function setupEventListeners() {
         transaction.status = status;
         transaction.accountId = accountId;
         transaction.accountType = accountType;
+        transaction.notes = notes;
         transaction.updated = true;
         dirtyTransactions.add(editingTransactionId); // Mark as changed
         showToast('Transaction updated successfully', 'success');
@@ -3925,6 +4157,7 @@ function setupEventListeners() {
         status,
         accountId,
         accountType, // Keep for backward compatibility
+        notes: notes,
         updated: false,
       };
       transactions.push(newTransaction);
